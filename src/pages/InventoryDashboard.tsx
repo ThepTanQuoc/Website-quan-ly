@@ -1,17 +1,20 @@
 import { useMemo, useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell, PieChart, Pie,
-  LineChart, Line, LabelList, Legend,
+  LineChart, Line, LabelList, Legend, AreaChart, Area, ReferenceLine,
 } from "recharts";
 import {
   Warehouse, Boxes, Layers, AlertTriangle, RefreshCw, Search, CheckCircle2, TrendingUp, MapPin, Package,
-  Database, X, Activity, Gauge, ArrowRight, Bell,
+  Database, X, Activity, Gauge, ArrowRight, Bell, Calendar, ShoppingBag, ChevronRight, TrendingDown, Clock,
 } from "lucide-react";
 import { Card, Pill, EmptyState } from "../components/ui";
 import PeriodSelect from "../components/PeriodSelect";
 import { useInventory, type InvItem } from "../lib/inventory";
 import { useOrders, computeStats, periodRange, PERIOD_CURRENT, type Period } from "../lib/salesStore";
-import { forecastCategory, depletionByCategory, STOCK_STATUS_META, type DepletionRow } from "../lib/forecast";
+import {
+  forecastCategory, depletionByCategory, buildCategoryDetail, STOCK_STATUS_META,
+  type DepletionRow, type CategoryDetail,
+} from "../lib/forecast";
 import { fmt, fmtShort } from "../lib/format";
 
 const INV_COLORS: Record<string, string> = {
@@ -37,6 +40,7 @@ export default function InventoryDashboard() {
   const [cat, setCat] = useState("all");
   const [showAlert, setShowAlert] = useState(false);
   const [fcCat, setFcCat] = useState("");
+  const [detailCat, setDetailCat] = useState<string | null>(null);
 
   const stats = computeStats(orders, periodRange(period));
 
@@ -49,6 +53,10 @@ export default function InventoryDashboard() {
   const forecast = useMemo(
     () => (fcCategory ? forecastCategory(orders, fcCategory) : null),
     [orders, fcCategory],
+  );
+  const detail = useMemo(
+    () => (detailCat ? buildCategoryDetail(orders, items, detailCat) : null),
+    [orders, items, detailCat],
   );
 
   const byCat = useMemo(() => {
@@ -240,11 +248,7 @@ export default function InventoryDashboard() {
 
       {/* Depletion forecast table */}
       <Card title="Dự báo cạn kho theo nhóm hàng" icon={<Gauge size={16} />}
-        action={atRisk.length > 0 && (
-          <button onClick={() => setShowAlert(true)} className="flex items-center gap-1 text-xs font-semibold text-rose-500 hover:underline">
-            <Bell size={13} /> {atRisk.length} nhóm cần chú ý
-          </button>
-        )}
+        action={<span className="text-xs text-slate-400">Bấm vào một nhóm để xem dự báo chi tiết →</span>}
       >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -255,20 +259,26 @@ export default function InventoryDashboard() {
                 <th className="pb-2 text-right">Tiêu thụ TB/tuần</th>
                 <th className="pb-2 text-center">Dự báo còn</th>
                 <th className="pb-2 text-center">Trạng thái</th>
+                <th className="pb-2"></th>
               </tr>
             </thead>
             <tbody>
               {depletion.map((r) => {
                 const meta = STOCK_STATUS_META[r.status];
                 return (
-                  <tr key={r.category} className="border-t border-slate-50">
-                    <td className="py-2 pl-1 font-medium text-navy-950">{r.category}</td>
-                    <td className="py-2 text-right text-slate-600">{ton(r.stockKg)}</td>
-                    <td className="py-2 text-right text-slate-600">{r.rateKgWeek > 0 ? fmt(r.rateKgWeek) + " kg" : "—"}</td>
-                    <td className="py-2 text-center font-semibold" style={{ color: meta.color }}>
-                      {r.weeksLeft === Infinity ? "—" : r.weeksLeft < 0.1 ? "< 1 ngày" : `${r.weeksLeft.toFixed(1)} tuần`}
+                  <tr
+                    key={r.category}
+                    onClick={() => setDetailCat(r.category)}
+                    className="cursor-pointer border-t border-slate-50 transition-colors hover:bg-cyan-50/50"
+                  >
+                    <td className="py-2.5 pl-1 font-medium text-navy-950">{r.category}</td>
+                    <td className="py-2.5 text-right text-slate-600">{ton(r.stockKg)}</td>
+                    <td className="py-2.5 text-right text-slate-600">{r.rateKgWeek > 0 ? fmt(r.rateKgWeek) + " kg" : "—"}</td>
+                    <td className="py-2.5 text-center font-semibold" style={{ color: meta.color }}>
+                      {r.weeksLeft === Infinity ? "—" : r.weeksLeft < 0.15 ? "< 1 ngày" : `${r.weeksLeft.toFixed(1)} tuần`}
                     </td>
-                    <td className="py-2 text-center"><Pill color={meta.pill}>{meta.label}</Pill></td>
+                    <td className="py-2.5 text-center"><Pill color={meta.pill}>{meta.label}</Pill></td>
+                    <td className="py-2.5 pr-1 text-right"><ChevronRight size={16} className="text-slate-300" /></td>
                   </tr>
                 );
               })}
@@ -330,7 +340,170 @@ export default function InventoryDashboard() {
         </div>
       </Card>
 
-      {showAlert && <AlertModal lowStock={lowStock} atRisk={atRisk} onClose={() => setShowAlert(false)} />}
+      {showAlert && <AlertModal lowStock={lowStock} atRisk={atRisk} onClose={() => setShowAlert(false)} onPick={(c) => { setShowAlert(false); setDetailCat(c); }} />}
+      {detail && <CategoryDetailModal detail={detail} onClose={() => setDetailCat(null)} />}
+    </div>
+  );
+}
+
+function CategoryDetailModal({ detail, onClose }: { detail: CategoryDetail; onClose: () => void }) {
+  const meta = STOCK_STATUS_META[detail.status];
+  const ton = (kg: number) => (kg / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+  const stockoutWeek = detail.projection.find((p) => p.stockout);
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-navy-950/55 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="glass max-h-[90vh] w-full max-w-3xl overflow-auto p-6" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-display text-xl font-extrabold text-navy-950">{detail.category}</h3>
+              <Pill color={meta.pill}>{meta.label}</Pill>
+            </div>
+            <p className="mt-0.5 text-sm text-slate-500">Dự báo tồn kho chi tiết · {detail.itemCount} mặt hàng trong nhóm</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
+        </div>
+
+        {/* Top stats */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Mini label="Tồn hiện tại" value={ton(detail.stockKg) + " t"} sub={`${fmt(detail.stockKg)} kg`} icon={<Boxes size={15} />} />
+          <Mini label="Tiêu thụ TB/tuần" value={detail.rateKgWeek > 0 ? fmt(detail.rateKgWeek) + " kg" : "—"} sub={detail.trendUp ? "xu hướng tăng" : "ổn định/giảm"} icon={detail.trendUp ? <TrendingUp size={15} /> : <TrendingDown size={15} />} />
+          <Mini label="Dự báo còn" value={isFinite(detail.weeksLeft) ? detail.weeksLeft.toFixed(1) + " tuần" : "—"} sub={detail.status === "idle" ? "chưa bán gần đây" : "đến khi cạn"} icon={<Clock size={15} />} color={meta.color} />
+          <Mini label="Dự kiến hết hàng" value={detail.stockoutDate} sub="ngày cạn kho" icon={<Calendar size={15} />} color={meta.color} />
+        </div>
+
+        {/* Reorder suggestion */}
+        {detail.reorderQty > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-100">
+            <ShoppingBag size={16} className="text-amber-600" />
+            <span>Đề xuất <b>đặt thêm ~{fmt(detail.reorderQty)} kg</b> ({ton(detail.reorderQty)} tấn) để đủ dùng {detail.targetWeeks} tuần tới.</span>
+          </div>
+        ) : (
+          <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-emerald-100">
+            <CheckCircle2 size={16} /> Tồn kho đủ dùng trên {detail.targetWeeks} tuần — chưa cần đặt thêm.
+          </div>
+        )}
+
+        {/* Forecast + projection charts */}
+        <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-100 p-3">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Nhu cầu kg/tuần (thực tế + dự báo)</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={detail.forecast.data} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eef2f8" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={(v) => fmtShort(v)} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={38} />
+                <Tooltip formatter={(v: number, n) => [fmt(v) + " kg", n === "actual" ? "Thực tế" : "Dự báo"]} />
+                <Line type="monotone" dataKey="actual" name="actual" stroke="#1e3a8a" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                <Line type="monotone" dataKey="forecast" name="forecast" stroke="#06b6d4" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 2 }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="rounded-xl border border-slate-100 p-3">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Tồn kho dự phóng (kg)</div>
+            {detail.projection.length === 0 ? (
+              <div className="grid h-[180px] place-items-center text-center text-xs text-slate-400">Nhóm chưa có tiêu thụ gần đây nên chưa dự phóng được.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <AreaChart data={detail.projection} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="projFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={meta.color} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={meta.color} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f8" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={(v) => fmtShort(v)} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={38} />
+                  <Tooltip formatter={(v: number, n) => [fmt(v) + " kg", n === "remaining" ? "Tồn còn lại" : "Dự kiến dùng"]} />
+                  <ReferenceLine y={0} stroke="#e11d2a" strokeDasharray="3 3" />
+                  <Area type="monotone" dataKey="remaining" name="remaining" stroke={meta.color} strokeWidth={2.5} fill="url(#projFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Weekly projection table */}
+        {detail.projection.length > 0 && (
+          <div className="mt-5">
+            <div className="mb-2 text-sm font-semibold text-navy-950">Dự phóng tồn kho theo tuần</div>
+            <div className="overflow-x-auto rounded-xl border border-slate-100">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                    <th className="px-3 py-2">Tuần (từ)</th>
+                    <th className="px-3 py-2 text-right">Dự kiến dùng</th>
+                    <th className="px-3 py-2 text-right">Tồn còn lại</th>
+                    <th className="px-3 py-2 text-center">Trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.projection.map((p, i) => (
+                    <tr key={i} className={`border-t border-slate-50 ${p.stockout ? "bg-rose-50" : ""}`}>
+                      <td className="px-3 py-2 text-slate-600">{p.label}</td>
+                      <td className="px-3 py-2 text-right text-slate-600">{fmt(p.demand)} kg</td>
+                      <td className="px-3 py-2 text-right font-semibold text-navy-950">{fmt(p.remaining)} kg</td>
+                      <td className="px-3 py-2 text-center">
+                        {p.stockout ? <span className="text-xs font-bold text-rose-600">⚠ Hết hàng</span> : p.remaining < detail.rateKgWeek ? <span className="text-xs font-semibold text-amber-600">Sắp hết</span> : <span className="text-xs text-emerald-600">Đủ</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {stockoutWeek && <p className="mt-1.5 text-xs text-rose-500">Dự kiến cạn kho khoảng tuần {stockoutWeek.label} (≈ {detail.stockoutDate}).</p>}
+          </div>
+        )}
+
+        {/* Per-item breakdown */}
+        <div className="mt-5">
+          <div className="mb-2 text-sm font-semibold text-navy-950">Chi tiết mặt hàng trong nhóm</div>
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                  <th className="px-3 py-2">Mặt hàng</th>
+                  <th className="px-3 py-2">Vị trí</th>
+                  <th className="px-3 py-2 text-right">Tồn</th>
+                  <th className="px-3 py-2 text-right">% nhóm</th>
+                  <th className="px-3 py-2 text-right">Ước tính hết</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.items.map((it, i) => (
+                  <tr key={i} className="border-t border-slate-50">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-navy-950">{it.name}</div>
+                      {it.spec && <div className="text-[11px] text-slate-400">{it.spec}</div>}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500">{it.location || "—"}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmt(it.qty)} {it.unit}<div className="text-[11px] text-slate-400">{fmt(it.weightKg)} kg</div></td>
+                    <td className="px-3 py-2 text-right text-slate-600">{it.share.toFixed(0)}%</td>
+                    <td className="px-3 py-2 text-right">
+                      {isFinite(it.estWeeks) ? <><div className="font-semibold text-navy-950">{it.estWeeks.toFixed(1)} tuần</div><div className="text-[11px] text-slate-400">{it.estDate}</div></> : <span className="text-slate-400">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1.5 text-[11px] text-slate-400">* Ước tính từng mặt hàng theo giả định tiêu thụ chia đều giữa các quy cách trong nhóm. Số liệu sẽ chính xác hơn khi có lịch sử bán theo từng quy cách.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Mini({ label, value, sub, icon, color }: { label: string; value: string; sub: string; icon: React.ReactNode; color?: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        <span style={{ color: color || "#06b6d4" }}>{icon}</span> {label}
+      </div>
+      <div className="mt-1 font-display text-base font-extrabold" style={{ color: color || "#0b1b4d" }}>{value}</div>
+      <div className="text-[11px] text-slate-400">{sub}</div>
     </div>
   );
 }
@@ -352,7 +525,7 @@ function Kpi({ label, value, sub, icon, tone, onClick }: { label: string; value:
   );
 }
 
-function AlertModal({ lowStock, atRisk, onClose }: { lowStock: InvItem[]; atRisk: DepletionRow[]; onClose: () => void }) {
+function AlertModal({ lowStock, atRisk, onClose, onPick }: { lowStock: InvItem[]; atRisk: DepletionRow[]; onClose: () => void; onPick: (c: string) => void }) {
   const ton = (kg: number) => (kg / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 1 });
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-navy-950/50 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -374,9 +547,9 @@ function AlertModal({ lowStock, atRisk, onClose }: { lowStock: InvItem[]; atRisk
             {atRisk.map((r) => {
               const meta = STOCK_STATUS_META[r.status];
               return (
-                <div key={r.category} className="rounded-xl px-3 py-2.5" style={{ background: meta.color + "12" }}>
+                <div key={r.category} onClick={() => onPick(r.category)} className="cursor-pointer rounded-xl px-3 py-2.5 transition-transform hover:translate-x-0.5" style={{ background: meta.color + "12" }}>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-navy-950">{r.category}</span>
+                    <span className="flex items-center gap-1 font-semibold text-navy-950">{r.category} <ChevronRight size={14} className="text-slate-400" /></span>
                     <Pill color={meta.pill}>{meta.label}</Pill>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px] text-slate-500">
