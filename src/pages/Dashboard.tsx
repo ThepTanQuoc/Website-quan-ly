@@ -31,6 +31,11 @@ import {
   Receipt,
   Lock,
   Settings2,
+  Activity,
+  Target,
+  Percent,
+  Repeat,
+  UserPlus,
 } from "lucide-react";
 import { Card, Pill } from "../components/ui";
 import PeriodSelect from "../components/PeriodSelect";
@@ -38,6 +43,7 @@ import { lockDirector } from "../components/PasswordGate";
 import {
   useOrders,
   computeStats,
+  computeDirectorMetrics,
   trendSeries,
   periodRange,
   PERIOD_CURRENT,
@@ -74,9 +80,11 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => 
   const [cfg, setCfg] = useProfitConfig();
   const [editCost, setEditCost] = useState(false);
 
-  const s = computeStats(orders, periodRange(period));
+  const range = periodRange(period);
+  const s = computeStats(orders, range);
   const trend = trendSeries(orders, period);
   const profit = computeProfit(s.revenue, cfg, period);
+  const m = computeDirectorMetrics(orders, range);
 
   // Tăng trưởng kỳ hiện tại so với kỳ trước (2 bucket cuối của chuỗi xu hướng)
   const cur = trend[trend.length - 1]?.revenue || 0;
@@ -209,6 +217,20 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => 
             tone={profit.netProfit >= 0 ? "green" : "red"}
             highlight
           />
+        </div>
+      </Card>
+
+      {/* Chỉ số kinh doanh */}
+      <Card title="Chỉ số kinh doanh quan trọng" icon={<Activity size={16} />}>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-4">
+          <Metric label="Tỷ lệ chốt đơn" value={m.winRate.toFixed(0) + "%"} sub="đơn chốt / tổng cơ hội" icon={<Target size={15} />} accent="cyan" />
+          <Metric label="Tỷ lệ thu hồi nợ" value={m.collectionRate.toFixed(0) + "%"} sub="đã thu / doanh thu" icon={<Percent size={15} />} accent="green" />
+          <Metric label="Khách hoạt động" value={String(m.activeCustomers)} sub={`${m.newCustomers} khách mới`} icon={<Users size={15} />} accent="navy" />
+          <Metric label="Khách quay lại" value={m.repeatRate.toFixed(0) + "%"} sub="tỷ lệ khách cũ" icon={<Repeat size={15} />} accent="violet" />
+          <Metric label="Doanh thu / khách" value={fmtShort(m.revenuePerCustomer) + "đ"} sub="bình quân trong kỳ" icon={<UserPlus size={15} />} accent="cyan" />
+          <Metric label="Giá trị đơn TB" value={fmtShort(s.avgOrder) + "đ"} sub={`${fmt(m.klPerOrder)} kg/đơn`} icon={<Receipt size={15} />} accent="navy" />
+          <Metric label="Đơn lớn nhất" value={fmtShort(m.biggestOrder) + "đ"} sub="trong kỳ" icon={<Crown size={15} />} accent="amber" />
+          <Metric label="Lợi nhuận ròng" value={fmtShort(profit.netProfit) + "đ"} sub={`biên ${profit.netMargin.toFixed(0)}%`} icon={<PiggyBank size={15} />} accent={profit.netProfit >= 0 ? "green" : "red"} />
         </div>
       </Card>
 
@@ -422,6 +444,29 @@ function Kpi({
         {sub && <span className="truncate text-[11px] text-slate-400">{trendLabel || sub}</span>}
       </div>
       {trend !== undefined && sub && <div className="relative mt-0.5 truncate text-[11px] text-slate-400">{sub}</div>}
+    </div>
+  );
+}
+
+function Metric({
+  label, value, sub, icon, accent,
+}: {
+  label: string; value: string; sub: string; icon: React.ReactNode;
+  accent: "cyan" | "green" | "navy" | "amber" | "violet" | "red";
+}) {
+  const c: Record<string, string> = {
+    cyan: "text-cyan-600 bg-cyan-50", green: "text-emerald-600 bg-emerald-50",
+    navy: "text-indigo-600 bg-indigo-50", amber: "text-amber-600 bg-amber-50",
+    violet: "text-violet-600 bg-violet-50", red: "text-rose-600 bg-rose-50",
+  };
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white/60 p-3">
+      <div className="flex items-center gap-2">
+        <span className={`grid h-7 w-7 place-items-center rounded-lg ${c[accent]}`}>{icon}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      </div>
+      <div className="mt-2 font-display text-lg font-extrabold text-navy-950">{value}</div>
+      <div className="text-[11px] text-slate-400">{sub}</div>
     </div>
   );
 }
