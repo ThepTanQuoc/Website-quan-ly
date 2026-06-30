@@ -26,20 +26,26 @@ import {
   Clock,
   Boxes,
   Trophy,
-  CalendarRange,
+  Coins,
+  PiggyBank,
+  Receipt,
+  Lock,
+  Settings2,
 } from "lucide-react";
 import { Card, Pill } from "../components/ui";
+import PeriodSelect from "../components/PeriodSelect";
+import { lockDirector } from "../components/PasswordGate";
 import {
   useOrders,
   computeStats,
   trendSeries,
   periodRange,
-  PERIODS,
   PERIOD_CURRENT,
   CATEGORY_COLORS,
   type Period,
 } from "../lib/salesStore";
-import { fmt, fmtShort, fmtVND } from "../lib/format";
+import { useProfitConfig, computeProfit } from "../lib/profitConfig";
+import { fmt, fmtShort, fmtVND, num } from "../lib/format";
 
 const fmtTon = (kg: number) => (kg / 1000).toLocaleString("vi-VN", { maximumFractionDigits: 1 });
 
@@ -65,9 +71,12 @@ const MEDALS = ["#f59e0b", "#94a3b8", "#b45309", "#06b6d4", "#1e3a8a"];
 export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => void }) {
   const orders = useOrders();
   const [period, setPeriod] = useState<Period>("month");
+  const [cfg, setCfg] = useProfitConfig();
+  const [editCost, setEditCost] = useState(false);
 
   const s = computeStats(orders, periodRange(period));
   const trend = trendSeries(orders, period);
+  const profit = computeProfit(s.revenue, cfg, period);
 
   // Tăng trưởng kỳ hiện tại so với kỳ trước (2 bucket cuối của chuỗi xu hướng)
   const cur = trend[trend.length - 1]?.revenue || 0;
@@ -82,42 +91,35 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => 
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-extrabold tracking-tight text-navy-950 sm:text-3xl">
-            Tổng quan kinh doanh
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-navy-950 sm:text-3xl">
+              Báo cáo Giám đốc
+            </h1>
+            <span className="chip bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
+              <Lock size={11} /> Bảo mật
+            </span>
+          </div>
           <p className="mt-1 text-sm text-slate-500">
-            Phòng kinh doanh Thép Tấn Quốc · đang xem:{" "}
+            Doanh thu · công nợ · lợi nhuận — đang xem:{" "}
             <b className="text-navy">{PERIOD_CURRENT[period]}</b>
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Pill color="green">
             <CheckCircle2 size={13} /> {s.wonCount} đơn chốt
           </Pill>
           <Pill color="amber">
             <Clock size={13} /> {s.pendingCount} đơn chờ
           </Pill>
-        </div>
-      </div>
-
-      {/* Bộ lọc thời gian */}
-      <div className="glass flex flex-wrap items-center gap-2 p-2.5">
-        <span className="ml-1 mr-1 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-          <CalendarRange size={15} /> Xem theo:
-        </span>
-        {PERIODS.map((p) => (
+          <PeriodSelect value={period} onChange={setPeriod} />
           <button
-            key={p.key}
-            onClick={() => setPeriod(p.key)}
-            className={`rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all ${
-              period === p.key
-                ? "bg-gradient-to-r from-navy to-brand-cyan text-white shadow-glow-cyan"
-                : "text-slate-500 hover:bg-slate-100 hover:text-navy"
-            }`}
+            onClick={lockDirector}
+            title="Khoá lại"
+            className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white/70 text-slate-500 hover:text-navy"
           >
-            {p.label}
+            <Lock size={16} />
           </button>
-        ))}
+        </div>
       </div>
 
       {/* KPI row */}
@@ -154,6 +156,61 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => 
           tone="navy"
         />
       </div>
+
+      {/* Profit section */}
+      <Card
+        title="Lợi nhuận"
+        icon={<PiggyBank size={16} />}
+        action={
+          <button onClick={() => setEditCost((v) => !v)} className="flex items-center gap-1 text-xs font-semibold text-cyan-600 hover:underline">
+            <Settings2 size={13} /> {editCost ? "Xong" : "Nhập giá vốn & chi phí"}
+          </button>
+        }
+      >
+        {editCost && (
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">Giá vốn (% trên doanh thu)</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range" min={50} max={99} value={cfg.costRatio}
+                  onChange={(e) => setCfg({ ...cfg, costRatio: num(e.target.value) })}
+                  className="flex-1 accent-cyan-500"
+                />
+                <input
+                  value={cfg.costRatio}
+                  onChange={(e) => setCfg({ ...cfg, costRatio: Math.min(100, num(e.target.value)) })}
+                  className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm focus:border-cyan-400 focus:outline-none"
+                />
+                <span className="text-sm font-semibold text-slate-500">%</span>
+              </div>
+              <span className="mt-1 block text-[11px] text-slate-400">Lãi gộp ước tính {(100 - cfg.costRatio).toFixed(0)}%</span>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">Chi phí vận hành (đ / tháng)</span>
+              <input
+                value={cfg.monthlyExpense}
+                onChange={(e) => setCfg({ ...cfg, monthlyExpense: num(e.target.value) })}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-cyan-400 focus:outline-none"
+              />
+              <span className="mt-1 block text-[11px] text-slate-400">Lương, kho bãi, vận chuyển... (tự quy đổi theo kỳ đang xem)</span>
+            </label>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <ProfitStat label="Giá vốn hàng bán" value={fmtShort(profit.cogs) + " đ"} sub={`${cfg.costRatio}% doanh thu`} icon={<Receipt size={16} />} tone="slate" />
+          <ProfitStat label="Lợi nhuận gộp" value={fmtShort(profit.grossProfit) + " đ"} sub={`Biên ${profit.grossMargin.toFixed(0)}%`} icon={<Coins size={16} />} tone="cyan" />
+          <ProfitStat label="Chi phí vận hành" value={fmtShort(profit.expense) + " đ"} sub={PERIOD_CURRENT[period].toLowerCase()} icon={<Receipt size={16} />} tone="amber" />
+          <ProfitStat
+            label="Lợi nhuận ròng"
+            value={fmtShort(profit.netProfit) + " đ"}
+            sub={`Biên ${profit.netMargin.toFixed(0)}%`}
+            icon={<PiggyBank size={16} />}
+            tone={profit.netProfit >= 0 ? "green" : "red"}
+            highlight
+          />
+        </div>
+      </Card>
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -365,6 +422,27 @@ function Kpi({
         {sub && <span className="truncate text-[11px] text-slate-400">{trendLabel || sub}</span>}
       </div>
       {trend !== undefined && sub && <div className="relative mt-0.5 truncate text-[11px] text-slate-400">{sub}</div>}
+    </div>
+  );
+}
+
+function ProfitStat({
+  label, value, sub, icon, tone, highlight,
+}: {
+  label: string; value: string; sub: string; icon: React.ReactNode;
+  tone: "slate" | "cyan" | "amber" | "green" | "red"; highlight?: boolean;
+}) {
+  const ic: Record<string, string> = {
+    slate: "bg-slate-400", cyan: "bg-cyan-500", amber: "bg-amber-500", green: "bg-emerald-500", red: "bg-rose-500",
+  };
+  return (
+    <div className={`rounded-2xl p-4 ${highlight ? "bg-gradient-to-br from-navy to-[#0e7490] text-white" : "bg-slate-50/80"}`}>
+      <div className="flex items-center justify-between">
+        <span className={`text-[11px] font-semibold uppercase tracking-wider ${highlight ? "text-cyan-100" : "text-slate-400"}`}>{label}</span>
+        <span className={`grid h-7 w-7 place-items-center rounded-lg text-white ${highlight ? "bg-white/20" : ic[tone]}`}>{icon}</span>
+      </div>
+      <div className={`mt-2 font-display text-xl font-extrabold ${highlight ? "text-white" : "text-navy-950"}`}>{value}</div>
+      <div className={`mt-0.5 text-[11px] ${highlight ? "text-cyan-100/80" : "text-slate-400"}`}>{sub}</div>
     </div>
   );
 }

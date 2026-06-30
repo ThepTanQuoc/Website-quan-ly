@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TEST — Bóc tách & cắt bản vẽ HRC (AI)</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root { --navy:#1e3a8a; --deep:#0b1b4d; --cyan:#06b6d4; --red:#e11d2a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Segoe UI',system-ui,Arial,sans-serif; color:#0f172a;
+    background:radial-gradient(900px 500px at 85% -10%,rgba(6,182,212,.15),transparent 60%),
+    radial-gradient(700px 400px at -10% 0,rgba(30,58,138,.15),transparent 55%),linear-gradient(180deg,#f4f8ff,#eaf0fb); }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px; }
+  .head { display:flex; align-items:center; gap:14px; margin-bottom:6px; }
+  .logo { width:46px; height:46px; border-radius:12px; display:grid; place-items:center; font-weight:800; color:#fff;
+    background:linear-gradient(135deg,var(--navy),var(--cyan)); box-shadow:0 0 22px -4px rgba(6,182,212,.6); }
+  h1 { font-size:22px; margin:0; color:var(--deep); }
+  .sub { color:#64748b; font-size:13px; margin:2px 0 0; }
+  .badge { display:inline-block; background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; font-size:12px;
+    font-weight:700; padding:3px 10px; border-radius:999px; }
+  .grid { display:grid; gap:16px; }
+  .card { background:rgba(255,255,255,.78); border:1px solid rgba(255,255,255,.7); border-radius:18px; padding:16px;
+    backdrop-filter:blur(12px); box-shadow:0 12px 40px -18px rgba(30,58,138,.4); }
+  .card h3 { margin:0 0 12px; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:#94a3b8; }
+  label { display:block; font-size:12px; font-weight:600; color:#64748b; margin-bottom:4px; }
+  input, select { width:100%; padding:9px 11px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px; background:#fff; }
+  input:focus, select:focus { outline:none; border-color:var(--cyan); }
+  .row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .btn { display:inline-flex; align-items:center; gap:7px; border:none; cursor:pointer; font-weight:700; font-size:14px;
+    padding:10px 16px; border-radius:11px; color:#fff; background:linear-gradient(135deg,var(--navy),var(--cyan)); }
+  .btn.ghost { background:#fff; color:#334155; border:1px solid #e2e8f0; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; color:#94a3b8; padding:6px 4px; }
+  td { padding:5px 4px; border-top:1px solid #f1f5f9; }
+  td input, td select { padding:6px 8px; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .kpi { background:rgba(255,255,255,.8); border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,.7); }
+  .kpi .l { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:#94a3b8; }
+  .kpi .v { font-size:22px; font-weight:800; color:var(--deep); margin-top:4px; }
+  .kpi .s { font-size:11px; color:#94a3b8; margin-top:2px; }
+  .flow { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .step { border-radius:14px; padding:14px; color:#fff; }
+  .muted { color:#64748b; font-size:12px; }
+  .drop { border:2px dashed #cbd5e1; border-radius:14px; padding:22px; text-align:center; color:#64748b; cursor:pointer;
+    background:rgba(255,255,255,.5); }
+  .drop:hover { border-color:var(--cyan); color:var(--navy); }
+  .err { color:var(--red); font-size:13px; margin-top:8px; }
+  .ok { color:#059669; font-size:13px; margin-top:8px; }
+  .pill { font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; }
+  .two { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; }
+  @media(max-width:860px){ .two,.row,.kpis,.flow{ grid-template-columns:1fr 1fr; } }
+  a.link { color:var(--cyan); }
+  code { background:#e2e8f0; padding:1px 5px; border-radius:5px; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useRef, useEffect } = React;
+const DENSITY = 7.85;
+const COLORS = ["#06b6d4","#1e3a8a","#7c3aed","#f59e0b","#10b981","#ec4899","#0ea5e9","#ef4444","#14b8a6","#8b5cf6"];
+const uid = () => Math.random().toString(36).slice(2,9);
+const num = (v) => { const n = Number(String(v??"").replace(",",".")); return isFinite(n)?n:0; };
+const fmt = (n) => Math.round(num(n)).toLocaleString("vi-VN");
+const fmt2 = (n) => num(n).toLocaleString("vi-VN",{maximumFractionDigits:2});
+const ton = (kg) => (kg/1000).toLocaleString("vi-VN",{maximumFractionDigits:2});
+
+// ───────── LOGIC CẮT (port từ Module 2) ─────────
+function partArea(p){ if(p.shape==="circle"){const r=p.w/2/1000; return Math.PI*r*r;} return (p.w/1000)*(p.l/1000); }
+function fitCount(uW,uL,w,l,kerf){ if(w<=0||l<=0)return 0; const nx=Math.floor((uW+kerf)/(w+kerf)); const ny=Math.floor((uL+kerf)/(l+kerf)); return Math.max(0,nx)*Math.max(0,ny); }
+function shelfPack(pieces, stock, opts){
+  const margin=opts.edgeTrim, kerf=opts.kerf, W=stock.w-margin*2, L=stock.l-margin*2;
+  const placements=[]; const sorted=[...pieces].sort((a,b)=>Math.max(b.w,b.l)-Math.max(a.w,a.l));
+  let plate=1, shelfY=0, shelfH=0, cursorX=0;
+  for(const pc of sorted){
+    let pw=pc.w, pl=pc.l;
+    if(opts.allowRotate && pc.shape==="rect" && pw<pl){ pw=pc.l; pl=pc.w; }
+    if(pw>W && opts.allowRotate){ pw=pc.w; pl=pc.l; }
+    if(pw>W || pl>L) continue;
+    if(cursorX+pw>W+0.01){ shelfY+=shelfH+kerf; shelfH=0; cursorX=0; }
+    if(shelfY+pl>L+0.01){ plate++; shelfY=0; shelfH=0; cursorX=0; }
+    placements.push({plate,x:margin+cursorX,y:margin+shelfY,w:pw,l:pl,name:pc.name,shape:pc.shape,colorIdx:pc.colorIdx});
+    cursorX+=pw+kerf; shelfH=Math.max(shelfH,pl);
+  }
+  return {placements, plates:plate};
+}
+function computeCutting(stock, parts, opts){
+  const uW=stock.w-opts.edgeTrim*2, uL=stock.l-opts.edgeTrim*2;
+  const oversize=[];
+  const stats=parts.filter(p=>p.qty>0&&p.w>0&&(p.shape==="circle"||p.l>0)).map(p=>{
+    const a1=partArea(p); const w1=a1*stock.thickness*DENSITY;
+    const box=p.shape==="circle"?p.w:p.l, boxw=p.w;
+    const fits=boxw<=uW+0.01&&box<=uL+0.01, fitsRot=box<=uW+0.01&&boxw<=uL+0.01;
+    const perPlate=Math.max(fitCount(uW,uL,boxw,box,opts.kerf), opts.allowRotate?fitCount(uW,uL,box,boxw,opts.kerf):0);
+    if(!fits&&!(opts.allowRotate&&fitsRot)) oversize.push(p.name||"(chưa đặt tên)");
+    return {...p, area1:a1, weight1:w1, perPlate, fits: fits||(opts.allowRotate&&fitsRot)};
+  });
+  const totalPieces=stats.reduce((s,p)=>s+p.qty,0);
+  let platesUsed=1, placements=[];
+  if(totalPieces>0 && totalPieces<=6000){
+    const list=[]; stats.forEach((p,idx)=>{ if(!p.fits)return; for(let i=0;i<p.qty;i++) list.push({w:p.w,l:p.shape==="circle"?p.w:p.l,name:p.name,shape:p.shape,colorIdx:idx}); });
+    const packed=shelfPack(list,stock,opts); placements=packed.placements; platesUsed=Math.max(1,packed.plates);
+  }
+  const plateArea=(stock.w/1000)*(stock.l/1000); const plateWeight=plateArea*stock.thickness*DENSITY;
+  const productWeight=stats.reduce((s,p)=>s+p.weight1*p.qty,0);
+  const sheetWeight=platesUsed*plateWeight;
+  const uncoilFactor=1-Math.min(0.5,opts.uncoilScrapPct/100);
+  const coilWeight=uncoilFactor>0?sheetWeight/uncoilFactor:sheetWeight;
+  const uncoilScrap=coilWeight-sheetWeight;
+  const cncScrap=Math.max(0,sheetWeight-productWeight);
+  const totalScrap=uncoilScrap+cncScrap;
+  const yield_=coilWeight>0?productWeight/coilWeight:0;
+  const plateUtil=sheetWeight>0?productWeight/sheetWeight:0;
+  const rawCost=coilWeight*stock.pricePerKg;
+  const scrapValue=totalScrap*opts.scrapPricePerKg;
+  const cuttingCost=productWeight*opts.cuttingCostPerKg;
+  const netCost=rawCost-scrapValue+cuttingCost;
+  const costPerKg=productWeight>0?netCost/productWeight:0;
+  return {parts:stats,placements,platesUsed,pieces:totalPieces,oversize,productWeight,sheetWeight,coilWeight,
+    uncoilScrap,cncScrap,totalScrap,yield:yield_,plateUtil,rawCost,scrapValue,cuttingCost,netCost,costPerKg};
+}
+
+// ───────── AI ─────────
+const PROMPT = `Bạn là kỹ sư bóc tách kết cấu thép. Đọc ảnh bản vẽ / bảng thống kê chi tiết thép TẤM (HRC) cần cắt và trả về DUY NHẤT một mảng JSON.
+Mỗi phần tử là 1 loại chi tiết tấm phẳng cần cắt ra:
+{"name":"tên/ký hiệu","shape":"rect|circle","w":rộng_mm,"l":dài_mm,"qty":số_lượng}
+Quy tắc:
+- Chi tiết CHỮ NHẬT: shape="rect", w=cạnh ngắn, l=cạnh dài (mm). "1 mét"=1000mm.
+- Chi tiết TRÒN (bích, tấm tròn Ø): shape="circle", w=l=đường kính (mm).
+- Số có "ly"/"li"/"mm dày" là ĐỘ DÀY — KHÔNG đưa vào w/l, có thể ghi vào name.
+- qty=số lượng. Không rõ để 1. Bỏ qua dòng tiêu đề/tổng cộng.
+- CHỈ trả về mảng JSON, không markdown.`;
+const toB64 = (file) => new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(",")[1]); r.onerror=rej; r.readAsDataURL(file); });
+function parseParts(text){
+  let t=(text||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let arr=[];
+  try{ const a=JSON.parse(t); if(Array.isArray(a))arr=a; else if(a&&Array.isArray(a.items))arr=a.items; }
+  catch(e){ const re=/\{[^{}]*\}/g; let m; while((m=re.exec(t))){ try{arr.push(JSON.parse(m[0]));}catch(e2){} } }
+  return arr.filter(o=>o&&(o.w||o.l)).map(o=>({id:uid(),name:String(o.name||"Chi tiết"),shape:o.shape==="circle"?"circle":"rect",w:num(o.w)||num(o.l),l:num(o.l)||num(o.w),qty:num(o.qty)||1}));
+}
+async function callAI(apiKey, base64, mediaType){
+  const res = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{ "content-type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true" },
+    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:4000, messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:mediaType,data:base64}},{type:"text",text:PROMPT}]}] })
+  });
+  if(!res.ok){ let m=""; try{ m=(await res.json()).error?.message||""; }catch(e){} throw new Error(m||("API lỗi "+res.status)); }
+  const data=await res.json(); const text=(data.content||[]).filter(i=>i.type==="text").map(i=>i.text).join("\n");
+  return parseParts(text);
+}
+
+function App(){
+  const [apiKey,setApiKey]=useState(localStorage.getItem("tq_test_key")||"");
+  const [stock,setStock]=useState({w:1500,l:6000,thickness:10,pricePerKg:16500});
+  const [opts,setOpts]=useState({uncoilScrapPct:2,kerf:3,edgeTrim:10,scrapPricePerKg:8000,cuttingCostPerKg:1500,allowRotate:true});
+  const [parts,setParts]=useState([
+    {id:uid(),name:"Bản mã BM1 (10ly)",shape:"rect",w:180,l:250,qty:60},
+    {id:uid(),name:"Sườn gia cường",shape:"rect",w:120,l:600,qty:40},
+    {id:uid(),name:"Mặt bích Ø320",shape:"circle",w:320,l:320,qty:16},
+  ]);
+  const [busy,setBusy]=useState(false); const [msg,setMsg]=useState(null); const [plateIdx,setPlateIdx]=useState(0);
+  const fileRef=useRef();
+  const result=useMemo(()=>computeCutting(stock,parts,opts),[stock,parts,opts]);
+
+  useEffect(()=>{ localStorage.setItem("tq_test_key",apiKey); },[apiKey]);
+  useEffect(()=>{
+    const onPaste=(e)=>{ const items=e.clipboardData?.items||[]; for(const it of items){ if(it.type.startsWith("image/")){ handleFile(it.getAsFile()); break; } } };
+    window.addEventListener("paste",onPaste); return ()=>window.removeEventListener("paste",onPaste);
+  });
+
+  const setP=(id,f,v)=>setParts(ps=>ps.map(p=>p.id===id?{...p,[f]:(f==="name"||f==="shape")?v:num(v)}:p));
+  const add=()=>setParts(ps=>[...ps,{id:uid(),name:"",shape:"rect",w:0,l:0,qty:1}]);
+  const del=(id)=>setParts(ps=>ps.filter(p=>p.id!==id));
+
+  async function handleFile(file){
+    if(!file) return;
+    if(!apiKey){ setMsg({err:"Hãy dán API key Anthropic ở ô trên trước."}); return; }
+    setBusy(true); setMsg(null);
+    try{
+      const b64=await toB64(file);
+      const got=await callAI(apiKey,b64,file.type||"image/png");
+      if(got.length){ setParts(ps=>[...ps,...got]); setMsg({ok:`Bóc tách được ${got.length} chi tiết.`}); }
+      else setMsg({err:"Không nhận ra chi tiết nào. Thử ảnh rõ hơn."});
+    }catch(e){ setMsg({err:"Lỗi: "+e.message}); }
+    finally{ setBusy(false); if(fileRef.current)fileRef.current.value=""; }
+  }
+
+  const plates=Math.max(1,result.platesUsed); const cur=Math.min(plateIdx,plates-1);
+  const Num=({label,val,on,w})=>(<div><label>{label}</label><input value={val||""} onChange={e=>on(num(e.target.value))}/></div>);
+
+  return (
+    <div className="wrap">
+      <div className="head">
+        <div className="logo">TQ</div>
+        <div>
+          <h1>Bóc tách & cắt bản vẽ HRC — bản TEST</h1>
+          <p className="sub">Thử nghiệm độc lập logic AI + xếp hình. Khi logic OK sẽ tích hợp vào website. <span className="badge">TEST</span></p>
+        </div>
+      </div>
+
+      <div className="grid" style={{marginTop:12}}>
+        <div className="card">
+          <h3>① Khoá API Anthropic (chỉ lưu trên máy bạn)</h3>
+          <div style={{display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:280}}>
+              <label>API Key (sk-ant-...) — lấy tại console.anthropic.com</label>
+              <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-ant-..." />
+            </div>
+            <span className="muted">Key chỉ nằm trong trình duyệt này (localStorage), không gửi đi đâu khác ngoài Anthropic.</span>
+          </div>
+        </div>
+
+        <div className="two">
+          <div className="card">
+            <h3>② Upload / dán ảnh bản vẽ</h3>
+            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])} />
+            <div className="drop" onClick={()=>fileRef.current?.click()}>
+              {busy ? "⏳ Đang đọc bản vẽ..." : "📤 Bấm chọn ảnh bản vẽ — hoặc Ctrl/Cmd + V để dán ảnh"}
+            </div>
+            {msg?.err && <div className="err">⚠ {msg.err}</div>}
+            {msg?.ok && <div className="ok">✅ {msg.ok}</div>}
+            <div className="muted" style={{marginTop:8}}>Mẹo: chụp/scan bảng thống kê chi tiết tấm rồi dán vào đây.</div>
+          </div>
+          <div className="card">
+            <h3>③ Khổ tấm HRC & thông số</h3>
+            <div className="row" style={{gridTemplateColumns:"1fr 1fr"}}>
+              <Num label="Khổ rộng (mm)" val={stock.w} on={v=>setStock({...stock,w:v})}/>
+              <Num label="Chiều dài (mm)" val={stock.l} on={v=>setStock({...stock,l:v})}/>
+              <Num label="Độ dày (mm)" val={stock.thickness} on={v=>setStock({...stock,thickness:v})}/>
+              <Num label="Giá phôi (đ/kg)" val={stock.pricePerKg} on={v=>setStock({...stock,pricePerKg:v})}/>
+              <Num label="Phế duỗi cuộn (%)" val={opts.uncoilScrapPct} on={v=>setOpts({...opts,uncoilScrapPct:v})}/>
+              <Num label="Mạch cắt kerf (mm)" val={opts.kerf} on={v=>setOpts({...opts,kerf:v})}/>
+              <Num label="Mép bỏ (mm)" val={opts.edgeTrim} on={v=>setOpts({...opts,edgeTrim:v})}/>
+              <Num label="Phí cắt (đ/kg)" val={opts.cuttingCostPerKg} on={v=>setOpts({...opts,cuttingCostPerKg:v})}/>
+            </div>
+            <label style={{marginTop:8,display:"flex",gap:8,alignItems:"center",fontWeight:600}}>
+              <input type="checkbox" style={{width:"auto"}} checked={opts.allowRotate} onChange={e=>setOpts({...opts,allowRotate:e.target.checked})}/> Cho phép xoay chi tiết
+            </label>
+          </div>
+        </div>
+
+        <div className="flow">
+          {[["Bước 1 · Cuộn HRC",result.coilWeight,`Phế duỗi ${opts.uncoilScrapPct}% = ${fmt(result.uncoilScrap)} kg`,"#1e3a8a"],
+            ["Bước 2 · Tấm phẳng",result.sheetWeight,`${result.platesUsed} tấm · phế cắt ${fmt(result.cncScrap)} kg`,"#0e7490"],
+            ["Bước 3 · Thành phẩm",result.productWeight,`${result.pieces} chi tiết · ${result.parts.length} loại`,"#06b6d4"]
+          ].map(([t,w,n,c],i)=>(
+            <div className="step" key={i} style={{background:c}}>
+              <div style={{fontSize:11,textTransform:"uppercase",letterSpacing:".1em",opacity:.85}}>{t}</div>
+              <div style={{fontSize:24,fontWeight:800,marginTop:6}}>{ton(w)} <span style={{fontSize:13,opacity:.8}}>tấn</span></div>
+              <div style={{fontSize:12,opacity:.9,marginTop:4}}>{n}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="kpis">
+          <div className="kpi"><div className="l">Số tấm HRC</div><div className="v">{result.platesUsed}</div><div className="s">{ton(result.sheetWeight)} tấn</div></div>
+          <div className="kpi"><div className="l">Tổng phế liệu</div><div className="v">{ton(result.totalScrap)} t</div><div className="s">Duỗi {fmt(result.uncoilScrap)} + cắt {fmt(result.cncScrap)} kg</div></div>
+          <div className="kpi"><div className="l">Hiệu suất (yield)</div><div className="v" style={{color:result.yield>=.75?"#059669":"#e11d2a"}}>{(result.yield*100).toFixed(1)}%</div><div className="s">Tận dụng tấm {(result.plateUtil*100).toFixed(0)}%</div></div>
+          <div className="kpi"><div className="l">Giá thành /kg TP</div><div className="v">{fmt(result.costPerKg)}đ</div><div className="s">Chi phí ròng {fmt(result.netCost)}đ</div></div>
+        </div>
+
+        <div className="two">
+          <div className="card">
+            <h3>④ Danh sách chi tiết cần cắt <button className="btn ghost" style={{float:"right",padding:"5px 11px"}} onClick={add}>+ Thêm</button></h3>
+            <table>
+              <thead><tr><th>Tên</th><th>Dạng</th><th>Rộng/Ø</th><th>Dài</th><th>SL</th><th>KL kg</th><th>Vừa</th><th></th></tr></thead>
+              <tbody>
+                {result.parts.concat(parts.filter(p=>!result.parts.find(r=>r.id===p.id)).map(p=>({...p,weight1:0,fits:true}))).map((p,idx)=>(
+                  <tr key={p.id}>
+                    <td><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:11,height:11,borderRadius:3,background:COLORS[idx%COLORS.length]}}></span><input value={p.name} onChange={e=>setP(p.id,"name",e.target.value)} placeholder="Tên"/></div></td>
+                    <td><select value={p.shape} onChange={e=>setP(p.id,"shape",e.target.value)}><option value="rect">Chữ nhật</option><option value="circle">Tròn</option></select></td>
+                    <td><input value={p.w||""} onChange={e=>setP(p.id,"w",e.target.value)} style={{textAlign:"right"}}/></td>
+                    <td>{p.shape==="circle"?<div style={{textAlign:"right",color:"#cbd5e1"}}>—</div>:<input value={p.l||""} onChange={e=>setP(p.id,"l",e.target.value)} style={{textAlign:"right"}}/>}</td>
+                    <td><input value={p.qty||""} onChange={e=>setP(p.id,"qty",e.target.value)} style={{textAlign:"right"}}/></td>
+                    <td style={{textAlign:"right",color:"#64748b"}}>{p.weight1?fmt2(p.weight1*p.qty):"—"}</td>
+                    <td style={{textAlign:"center"}}>{p.fits?<span style={{color:"#10b981"}}>●</span>:<span style={{color:"#ef4444"}} title="Không vừa khổ">✕</span>}</td>
+                    <td style={{textAlign:"right"}}><button onClick={()=>del(p.id)} style={{border:"none",background:"none",cursor:"pointer",color:"#cbd5e1"}}>🗑</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {result.oversize.length>0 && <div className="err">⚠ Chi tiết lớn hơn khổ tấm: <b>{result.oversize.join(", ")}</b></div>}
+          </div>
+
+          <div className="card">
+            <h3>⑤ Sơ đồ cắt {plates>1 && <span style={{float:"right",fontSize:12}}>
+              <button className="btn ghost" style={{padding:"3px 9px"}} onClick={()=>setPlateIdx(Math.max(0,cur-1))}>‹</button> Tấm {cur+1}/{plates} <button className="btn ghost" style={{padding:"3px 9px"}} onClick={()=>setPlateIdx(Math.min(plates-1,cur+1))}>›</button>
+            </span>}</h3>
+            <Layout stock={stock} result={result} plate={cur+1}/>
+            <div style={{display:"flex",flexWrap:"wrap",gap:"4px 12px",marginTop:10}}>
+              {result.parts.map((p,idx)=>(<span key={p.id} style={{fontSize:11,color:"#64748b",display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:COLORS[idx%COLORS.length]}}></span>{p.name||"Chi tiết"}</span>))}
+              <span style={{fontSize:11,color:"#94a3b8",display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:"#e2e8f0"}}></span>Phế liệu</span>
+            </div>
+            <div className="card" style={{marginTop:12,boxShadow:"none",background:"#f8fafc"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0"}}><span className="muted">Phôi cuộn ({ton(result.coilWeight)}t × {fmt(stock.pricePerKg)})</span><b>{fmt(result.rawCost)} đ</b></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0"}}><span className="muted">Phí cắt CNC</span><b>{fmt(result.cuttingCost)} đ</b></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0"}}><span className="muted">Thu hồi phế ({fmt(result.totalScrap)}kg)</span><b style={{color:"#059669"}}>− {fmt(result.scrapValue)} đ</b></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:15,padding:"6px 0 0",borderTop:"1px dashed #cbd5e1",marginTop:4}}><b>Chi phí ròng vật tư</b><b style={{color:"#1e3a8a"}}>{fmt(result.netCost)} đ</b></div>
+            </div>
+          </div>
+        </div>
+        <p className="muted" style={{textAlign:"center",margin:"6px 0 30px"}}>Bản test độc lập · logic xếp hình & phế liệu giống Module 2 trên website.</p>
+      </div>
+    </div>
+  );
+}
+
+function Layout({stock,result,plate}){
+  const pad=6, maxW=360, scale=(maxW-pad*2)/stock.w;
+  const W=stock.w*scale+pad*2, H=stock.l*scale+pad*2;
+  const items=result.placements.filter(p=>p.plate===plate);
+  return (
+    <div style={{display:"grid",placeItems:"center",background:"linear-gradient(#f8fafc,#fff)",borderRadius:12,padding:8}}>
+      <svg width={W} height={Math.min(H,520)} viewBox={`0 0 ${W} ${H}`} style={{maxHeight:520}}>
+        <defs><pattern id="h" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#cbd5e1" strokeWidth="1"/></pattern></defs>
+        <rect x={pad} y={pad} width={stock.w*scale} height={stock.l*scale} fill="#eef2f8" stroke="#94a3b8" strokeWidth={1.2} rx={3}/>
+        <rect x={pad} y={pad} width={stock.w*scale} height={stock.l*scale} fill="url(#h)" opacity={.5} rx={3}/>
+        {items.map((p,i)=>{ const x=pad+p.x*scale,y=pad+p.y*scale,w=p.w*scale,h=p.l*scale,c=COLORS[p.colorIdx%COLORS.length];
+          return p.shape==="circle"
+            ? <circle key={i} cx={x+w/2} cy={y+h/2} r={Math.min(w,h)/2} fill={c} fillOpacity={.85} stroke="#fff" strokeWidth={.8}/>
+            : <rect key={i} x={x} y={y} width={w} height={h} fill={c} fillOpacity={.85} stroke="#fff" strokeWidth={.8} rx={1}/>; })}
+      </svg>
+      {items.length===0 && <div style={{padding:24,color:"#94a3b8",fontSize:12}}>Nhập chi tiết để xem sơ đồ cắt</div>}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

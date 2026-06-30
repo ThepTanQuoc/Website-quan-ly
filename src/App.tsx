@@ -1,6 +1,7 @@
 import { useState, lazy, Suspense } from "react";
 import {
-  LayoutDashboard,
+  Warehouse,
+  LineChart,
   FileText,
   ShoppingCart,
   Scissors,
@@ -9,10 +10,13 @@ import {
   X,
   Activity,
   Loader2,
+  Lock,
 } from "lucide-react";
+import InventoryDashboard from "./pages/InventoryDashboard";
 import Dashboard from "./pages/Dashboard";
 import Orders from "./pages/Orders";
 import Settings from "./pages/Settings";
+import PasswordGate from "./components/PasswordGate";
 import { useOrders } from "./lib/salesStore";
 
 // Tách bundle: Module 1 (kéo theo xlsx) và Module 2 chỉ tải khi mở.
@@ -27,14 +31,15 @@ function Loading() {
   );
 }
 
-type View = "dashboard" | "quote" | "orders" | "hrc" | "settings";
+type View = "inventory" | "director" | "quote" | "orders" | "hrc" | "settings";
 
-const NAV: { key: View; label: string; sub: string; icon: typeof LayoutDashboard }[] = [
-  { key: "dashboard", label: "Tổng quan", sub: "Dashboard", icon: LayoutDashboard },
+const NAV: { key: View; label: string; sub: string; icon: typeof Warehouse; locked?: boolean }[] = [
+  { key: "inventory", label: "Kho hàng", sub: "Tồn kho & kinh doanh", icon: Warehouse },
+  { key: "director", label: "Báo cáo Giám đốc", sub: "Doanh thu · lợi nhuận", icon: LineChart, locked: true },
   { key: "quote", label: "Báo giá", sub: "Module 1", icon: FileText },
   { key: "orders", label: "Đơn hàng", sub: "Chờ xử lý & đã chốt", icon: ShoppingCart },
   { key: "hrc", label: "Bóc tách HRC", sub: "Module 2 · Cắt tấm", icon: Scissors },
-  { key: "settings", label: "Cài đặt", sub: "Google Sheet", icon: SettingsIcon },
+  { key: "settings", label: "Cài đặt", sub: "Google Sheet & Kho", icon: SettingsIcon },
 ];
 
 function Logo() {
@@ -57,7 +62,7 @@ function Logo() {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<View>("inventory");
   const [mobileOpen, setMobileOpen] = useState(false);
   const orders = useOrders();
   const pending = orders.filter((o) => o.status === "pending").length;
@@ -101,6 +106,7 @@ export default function App() {
                   {pending}
                 </span>
               )}
+              {n.locked && <Lock size={13} className="text-slate-400/70" />}
             </button>
           );
         })}
@@ -151,7 +157,12 @@ export default function App() {
         </header>
 
         <div className="mx-auto max-w-[1320px] p-4 sm:p-6">
-          {view === "dashboard" && <Dashboard onNavigate={(v) => go(v as View)} />}
+          {view === "inventory" && <InventoryDashboard />}
+          {view === "director" && (
+            <PasswordGate>
+              <Dashboard onNavigate={(v) => go(v as View)} />
+            </PasswordGate>
+          )}
           {view === "orders" && <Orders />}
           {view === "hrc" && (
             <Suspense fallback={<Loading />}>
