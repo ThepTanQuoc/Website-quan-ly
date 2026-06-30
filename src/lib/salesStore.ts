@@ -168,6 +168,55 @@ export function clearAll() {
   write([]);
 }
 
+// ── Chỉ số kinh doanh nâng cao (Báo cáo Giám đốc) ──
+export interface DirectorMetrics {
+  winRate: number; // tỷ lệ chốt đơn (%)
+  activeCustomers: number; // khách hoạt động trong kỳ
+  newCustomers: number; // khách mới (lần đầu chốt rơi vào kỳ)
+  repeatRate: number; // tỷ lệ khách quay lại (%)
+  revenuePerCustomer: number;
+  collectionRate: number; // tỷ lệ thu hồi công nợ (%)
+  biggestOrder: number; // đơn lớn nhất trong kỳ
+  klPerOrder: number; // sản lượng TB / đơn (kg)
+}
+
+export function computeDirectorMetrics(orders: Order[], range: Range): DirectorMetrics {
+  const inRange = (t: number) => t >= range.from && t < range.to;
+  const wt = (o: Order) => new Date(o.wonAt || o.date || o.createdAt).getTime();
+  const won = orders.filter((o) => o.status === "won" && inRange(wt(o)));
+  const pending = orders.filter((o) => o.status === "pending" && inRange(new Date(o.createdAt).getTime()));
+  const revenue = won.reduce((s, o) => s + o.total, 0);
+  const collected = won.reduce((s, o) => s + Math.min(o.paid, o.total), 0);
+  const totalKL = won.reduce((s, o) => s + o.totalKL, 0);
+  const custs = new Set(won.map((o) => o.customer));
+
+  // Lần chốt đầu tiên (toàn thời gian) của mỗi khách -> xác định khách mới
+  const firstWon = new Map<string, number>();
+  for (const o of orders) {
+    if (o.status !== "won") continue;
+    const t = wt(o);
+    const cur = firstWon.get(o.customer);
+    if (cur == null || t < cur) firstWon.set(o.customer, t);
+  }
+  let newC = 0;
+  custs.forEach((c) => {
+    const f = firstWon.get(c);
+    if (f != null && inRange(f)) newC++;
+  });
+
+  const denom = won.length + pending.length;
+  return {
+    winRate: denom > 0 ? (won.length / denom) * 100 : 0,
+    activeCustomers: custs.size,
+    newCustomers: newC,
+    repeatRate: custs.size ? ((custs.size - newC) / custs.size) * 100 : 0,
+    revenuePerCustomer: custs.size ? revenue / custs.size : 0,
+    collectionRate: revenue > 0 ? (collected / revenue) * 100 : 0,
+    biggestOrder: won.reduce((m, o) => Math.max(m, o.total), 0),
+    klPerOrder: won.length ? totalKL / won.length : 0,
+  };
+}
+
 // ── Kỳ lọc thời gian ──
 export type Period = "day" | "week" | "month" | "quarter" | "year" | "all";
 
