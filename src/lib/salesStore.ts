@@ -168,44 +168,144 @@ export function clearAll() {
   write([]);
 }
 
-// ── Thống kê cho Dashboard ──
+// ── Kỳ lọc thời gian ──
+export type Period = "day" | "week" | "month" | "quarter" | "year" | "all";
+
+export const PERIODS: { key: Period; label: string }[] = [
+  { key: "day", label: "Ngày" },
+  { key: "week", label: "Tuần" },
+  { key: "month", label: "Tháng" },
+  { key: "quarter", label: "Quý" },
+  { key: "year", label: "Năm" },
+  { key: "all", label: "Tất cả" },
+];
+
+export const PERIOD_CURRENT: Record<Period, string> = {
+  day: "Hôm nay",
+  week: "Tuần này",
+  month: "Tháng này",
+  quarter: "Quý này",
+  year: "Năm nay",
+  all: "Toàn bộ",
+};
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const startOfWeek = (d: Date) => {
+  const s = startOfDay(d);
+  s.setDate(s.getDate() - ((s.getDay() + 6) % 7)); // tuần bắt đầu Thứ 2
+  return s;
+};
+const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+const startOfQuarter = (d: Date) => new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1);
+const startOfYear = (d: Date) => new Date(d.getFullYear(), 0, 1);
+
+const orderTime = (o: Order) => new Date(o.wonAt || o.date || o.createdAt).getTime();
+
+export interface Range {
+  from: number;
+  to: number;
+}
+
+// Khoảng thời gian của "kỳ hiện tại"
+export function periodRange(period: Period, now = new Date()): Range {
+  const to = now.getTime() + 1;
+  switch (period) {
+    case "day": return { from: startOfDay(now).getTime(), to };
+    case "week": return { from: startOfWeek(now).getTime(), to };
+    case "month": return { from: startOfMonth(now).getTime(), to };
+    case "quarter": return { from: startOfQuarter(now).getTime(), to };
+    case "year": return { from: startOfYear(now).getTime(), to };
+    default: return { from: 0, to };
+  }
+}
+
+// Chuỗi bucket cho biểu đồ xu hướng theo kỳ
+export function trendSeries(
+  orders: Order[],
+  period: Period,
+  now = new Date(),
+): { label: string; revenue: number; orders: number }[] {
+  const won = orders.filter((o) => o.status === "won");
+  const buckets: { from: number; to: number; label: string }[] = [];
+  const push = (f: Date, t: Date, label: string) =>
+    buckets.push({ from: f.getTime(), to: t.getTime(), label });
+
+  if (period === "day") {
+    const base = startOfDay(now);
+    for (let i = 13; i >= 0; i--) {
+      const f = new Date(base); f.setDate(f.getDate() - i);
+      const t = new Date(f); t.setDate(t.getDate() + 1);
+      push(f, t, f.getDate() + "/" + (f.getMonth() + 1));
+    }
+  } else if (period === "week") {
+    const base = startOfWeek(now);
+    for (let i = 7; i >= 0; i--) {
+      const f = new Date(base); f.setDate(f.getDate() - i * 7);
+      const t = new Date(f); t.setDate(t.getDate() + 7);
+      push(f, t, f.getDate() + "/" + (f.getMonth() + 1));
+    }
+  } else if (period === "quarter") {
+    const base = startOfQuarter(now);
+    for (let i = 5; i >= 0; i--) {
+      const f = new Date(base.getFullYear(), base.getMonth() - i * 3, 1);
+      const t = new Date(f.getFullYear(), f.getMonth() + 3, 1);
+      push(f, t, "Q" + (Math.floor(f.getMonth() / 3) + 1) + "/" + String(f.getFullYear()).slice(2));
+    }
+  } else if (period === "year") {
+    const base = startOfYear(now);
+    for (let i = 4; i >= 0; i--) {
+      const f = new Date(base.getFullYear() - i, 0, 1);
+      const t = new Date(f.getFullYear() + 1, 0, 1);
+      push(f, t, String(f.getFullYear()));
+    }
+  } else {
+    const n = period === "all" ? 12 : 6;
+    const base = startOfMonth(now);
+    for (let i = n - 1; i >= 0; i--) {
+      const f = new Date(base.getFullYear(), base.getMonth() - i, 1);
+      const t = new Date(f.getFullYear(), f.getMonth() + 1, 1);
+      push(f, t, "Th" + (f.getMonth() + 1));
+    }
+  }
+
+  return buckets.map((b) => {
+    let revenue = 0;
+    let cnt = 0;
+    for (const o of won) {
+      const ts = orderTime(o);
+      if (ts >= b.from && ts < b.to) { revenue += o.total; cnt += 1; }
+    }
+    return { label: b.label, revenue, orders: cnt };
+  });
+}
+
+// ── Thống kê cho Dashboard (lọc theo kỳ nếu truyền range) ──
 export interface Stats {
-  revenue: number; // doanh thu (đơn đã chốt)
+  revenue: number; // doanh thu (đơn đã chốt trong kỳ)
   debt: number; // công nợ hiện tại
   collected: number; // đã thu = doanh thu - công nợ
   totalKL: number;
   wonCount: number;
   pendingCount: number;
   pendingValue: number;
-  byMonth: { key: string; label: string; revenue: number; orders: number }[];
   byCategory: { name: string; value: number; kl: number }[];
   topCustomers: { name: string; revenue: number; orders: number }[];
   bestProduct: { name: string; value: number } | null;
   avgOrder: number;
 }
 
-export function computeStats(orders: Order[]): Stats {
-  const won = orders.filter((o) => o.status === "won");
+export function computeStats(orders: Order[], range?: Range): Stats {
+  const inRange = (o: Order) => {
+    if (!range) return true;
+    const t = orderTime(o);
+    return t >= range.from && t < range.to;
+  };
+  const won = orders.filter((o) => o.status === "won" && inRange(o));
   const pending = orders.filter((o) => o.status === "pending");
   const revenue = won.reduce((s, o) => s + o.total, 0);
   const collected = won.reduce((s, o) => s + Math.min(o.paid, o.total), 0);
   const debt = revenue - collected;
   const totalKL = won.reduce((s, o) => s + o.totalKL, 0);
-
-  // Theo tháng (12 tháng gần nhất)
-  const monthMap = new Map<string, { revenue: number; orders: number }>();
-  for (const o of won) {
-    const key = (o.wonAt || o.date || o.createdAt).slice(0, 7);
-    const cur = monthMap.get(key) || { revenue: 0, orders: 0 };
-    cur.revenue += o.total;
-    cur.orders += 1;
-    monthMap.set(key, cur);
-  }
-  const byMonth = lastMonths(6).map((key) => {
-    const m = monthMap.get(key) || { revenue: 0, orders: 0 };
-    const mm = parseInt(key.slice(5), 10);
-    return { key, label: "Th" + mm, revenue: m.revenue, orders: m.orders };
-  });
 
   // Theo nhóm hàng
   const catMap = new Map<string, { value: number; kl: number }>();
@@ -221,7 +321,7 @@ export function computeStats(orders: Order[]): Stats {
     .map(([name, v]) => ({ name, value: v.value, kl: v.kl }))
     .sort((a, b) => b.value - a.value);
 
-  // Top khách hàng
+  // Top khách hàng (10)
   const custMap = new Map<string, { revenue: number; orders: number }>();
   for (const o of won) {
     const cur = custMap.get(o.customer) || { revenue: 0, orders: 0 };
@@ -232,7 +332,7 @@ export function computeStats(orders: Order[]): Stats {
   const topCustomers = [...custMap.entries()]
     .map(([name, v]) => ({ name, revenue: v.revenue, orders: v.orders }))
     .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5);
+    .slice(0, 10);
 
   const bestProduct = byCategory.length
     ? { name: byCategory[0].name, value: byCategory[0].value }
@@ -246,23 +346,11 @@ export function computeStats(orders: Order[]): Stats {
     wonCount: won.length,
     pendingCount: pending.length,
     pendingValue: pending.reduce((s, o) => s + o.total, 0),
-    byMonth,
     byCategory,
     topCustomers,
     bestProduct,
     avgOrder: won.length ? revenue / won.length : 0,
   };
-}
-
-function lastMonths(n: number): string[] {
-  const out: string[] = [];
-  const d = new Date();
-  d.setDate(1);
-  for (let i = n - 1; i >= 0; i--) {
-    const dd = new Date(d.getFullYear(), d.getMonth() - i, 1);
-    out.push(dd.toISOString().slice(0, 7));
-  }
-  return out;
 }
 
 // ── React hook realtime ──

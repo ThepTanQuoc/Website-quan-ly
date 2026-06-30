@@ -48,7 +48,7 @@ function parseParts(text: string): Part[] {
 }
 
 export async function extractPartsFromImage(base64: string, mediaType: string): Promise<Part[]> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/extract", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -65,7 +65,15 @@ export async function extractPartsFromImage(base64: string, mediaType: string): 
       ],
     }),
   });
-  if (!res.ok) throw new Error("API lỗi " + res.status);
+  if (!res.ok) {
+    let msg = "";
+    try {
+      msg = (await res.json()).error || "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg || "API lỗi " + res.status);
+  }
   const data = await res.json();
   const text = data?.content?.[0]?.text || "";
   return parseParts(text);
