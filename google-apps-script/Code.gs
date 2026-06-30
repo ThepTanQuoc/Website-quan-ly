@@ -1,0 +1,80 @@
+/**
+ * GOOGLE APPS SCRIPT — Nhận đơn hàng từ web Thép Tấn Quốc và ghi vào Google Sheet.
+ *
+ * CÁCH CÀI (1 lần, ~3 phút):
+ * 1. Tạo 1 Google Sheet mới (trang tính). Đặt tên tab đầu tiên là "DonHang".
+ * 2. Menu Extensions (Tiện ích mở rộng) -> Apps Script.
+ * 3. Xoá code mẫu, dán toàn bộ file này vào.
+ * 4. Bấm Deploy (Triển khai) -> New deployment -> chọn loại "Web app".
+ *      - Execute as: Me (chính bạn)
+ *      - Who has access: Anyone (Bất kỳ ai)
+ * 5. Copy "Web app URL" (dạng https://script.google.com/macros/s/..../exec)
+ * 6. Mở web Tấn Quốc -> trang "Cài đặt" -> dán URL vào ô Google Sheet -> Lưu.
+ *
+ * Từ đó, mỗi khi sale CHỐT ĐƠN (hoặc sửa/xoá đơn) hệ thống tự ghi 1 dòng vào Sheet.
+ */
+
+var SHEET_NAME = "DonHang";
+
+var HEADERS = [
+  "Thời điểm ghi", "Hành động", "Mã đơn", "Ngày báo giá", "Ngày chốt",
+  "Khách hàng", "Công trình", "Người báo giá", "Trạng thái",
+  "Nhóm hàng", "Chi tiết mặt hàng", "Tổng KL (kg)",
+  "Doanh thu (đ)", "Đã thu (đ)", "Công nợ (đ)", "Ghi chú"
+];
+
+function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    if (data.action === "ping") {
+      return json({ ok: true, pong: true });
+    }
+    var sheet = getSheet();
+    var row = [
+      new Date(),
+      data.action || "",
+      data.id || "",
+      data.date || "",
+      data.wonAt || "",
+      data.customer || "",
+      data.project || "",
+      data.quoter || "",
+      data.status || "",
+      data.products || "",
+      data.itemsDetail || "",
+      data.totalKL || 0,
+      data.total || 0,
+      data.paid || 0,
+      data.debt || 0,
+      data.note || ""
+    ];
+    sheet.appendRow(row);
+    return json({ ok: true });
+  } catch (err) {
+    return json({ ok: false, error: String(err) });
+  }
+}
+
+function doGet() {
+  return json({ ok: true, service: "TanQuoc Sales Sheet", time: new Date() });
+}
+
+function getSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME);
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(HEADERS);
+    sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
+    ContentService.MimeType.JSON
+  );
+}
