@@ -147,6 +147,127 @@ export function depletionByCategory(items: InvItem[], orders: Order[], now = new
   return rows.sort((a, b) => a.weeksLeft - b.weeksLeft);
 }
 
+// ── Chi tiết dự báo cho 1 nhóm hàng (khi bấm vào dòng) ──
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const fmtDate = (ms: number) => {
+  const d = new Date(ms);
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+};
+
+export interface ProjPoint {
+  label: string;
+  demand: number;
+  remaining: number;
+  stockout: boolean;
+}
+export interface ItemDepletion {
+  name: string;
+  spec: string;
+  location: string;
+  unit: string;
+  qty: number;
+  weightKg: number;
+  share: number; // % của nhóm
+  estWeeks: number;
+  estDate: string;
+}
+export interface CategoryDetail {
+  category: string;
+  status: StockStatus;
+  stockKg: number;
+  itemCount: number;
+  rateKgWeek: number;
+  trendUp: boolean;
+  weeksLeft: number;
+  stockoutDate: string;
+  targetWeeks: number;
+  reorderQty: number;
+  forecast: ForecastSeries;
+  history: WeekPoint[];
+  projection: ProjPoint[];
+  items: ItemDepletion[];
+}
+
+export function buildCategoryDetail(
+  orders: Order[],
+  items: InvItem[],
+  category: string,
+  targetWeeks = 4,
+  now = new Date(),
+): CategoryDetail {
+  const list = items.filter((it) => it.category === category);
+  const stockKg = list.reduce((s, it) => s + it.weightKg, 0);
+  const history = weeklyConsumption(orders, category, 10, now);
+  const ys = history.map((p) => p.kg);
+  const rate = weeklyRate(history);
+  const { a, b } = linreg(ys);
+  const n = ys.length;
+  const predict = (h: number) => Math.max(0, a + b * (n - 1 + h));
+
+  const weeksLeft = rate > 0 ? stockKg / rate : Infinity;
+  const nowMs = now.getTime();
+  const base = startOfWeek(now).getTime();
+
+  // Dự phóng tồn kho từng tuần tới (tối đa 16 tuần hoặc đến khi hết)
+  const projection: ProjPoint[] = [];
+  if (rate > 0) {
+    let remaining = stockKg;
+    for (let h = 1; h <= 16 && remaining > 0; h++) {
+      let demand = predict(h);
+      demand = Math.max(demand, rate * 0.5); // tránh dự báo trôi về 0 -> không bao giờ hết
+      remaining -= demand;
+      const wk = new Date(base + h * WEEK_MS);
+      projection.push({
+        label: wk.getDate() + "/" + (wk.getMonth() + 1),
+        demand: Math.round(demand),
+        remaining: Math.round(Math.max(0, remaining)),
+        stockout: remaining <= 0,
+      });
+    }
+  }
+
+  // Ước tính từng mặt hàng (giả định bán đều giữa các quy cách trong nhóm)
+  const itemRate = list.length > 0 && rate > 0 ? rate / list.length : 0;
+  const itemDetails: ItemDepletion[] = list
+    .map((it) => {
+      const estWeeks = itemRate > 0 ? it.weightKg / itemRate : Infinity;
+      return {
+        name: it.name,
+        spec: it.spec,
+        location: it.location,
+        unit: it.unit,
+        qty: it.qty,
+        weightKg: it.weightKg,
+        share: stockKg > 0 ? (it.weightKg / stockKg) * 100 : 0,
+        estWeeks,
+        estDate: isFinite(estWeeks) ? fmtDate(nowMs + estWeeks * WEEK_MS) : "—",
+      };
+    })
+    .sort((x, y) => x.estWeeks - y.estWeeks);
+
+  let status: StockStatus = "ok";
+  if (rate <= 0) status = "idle";
+  else if (weeksLeft <= 1) status = "critical";
+  else if (weeksLeft <= 2) status = "warn";
+
+  return {
+    category,
+    status,
+    stockKg,
+    itemCount: list.length,
+    rateKgWeek: rate,
+    trendUp: b > 0,
+    weeksLeft,
+    stockoutDate: isFinite(weeksLeft) ? fmtDate(nowMs + weeksLeft * WEEK_MS) : "—",
+    targetWeeks,
+    reorderQty: Math.max(0, Math.round(rate * targetWeeks - stockKg)),
+    forecast: forecastCategory(orders, category, 6, 10, now),
+    history,
+    projection,
+    items: itemDetails,
+  };
+}
+
 export const STOCK_STATUS_META: Record<StockStatus, { label: string; color: string; pill: "red" | "amber" | "green" | "slate" }> = {
   critical: { label: "Hết trong tuần", color: "#e11d2a", pill: "red" },
   warn: { label: "Cần đặt ≤ 2 tuần", color: "#f59e0b", pill: "amber" },
