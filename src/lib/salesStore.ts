@@ -7,7 +7,7 @@
 // ============================================================
 import { useEffect, useState } from "react";
 import { num, uid } from "./format";
-import { syncOrderToSheet } from "./googleSheet";
+import { syncOrderToSheet, syncDebtToSheet } from "./googleSheet";
 
 export type OrderStatus = "pending" | "won";
 
@@ -32,6 +32,8 @@ export interface Order {
   status: OrderStatus;
   wonAt?: string; // thời điểm chốt đơn
   paid: number; // số tiền đã thu (đ) -> công nợ = total - paid
+  paymentTermDays?: number; // số ngày khách phải chuyển tiền (deal riêng từng khách)
+  dueDate?: string; // hạn chuyển tiền (ISO date) = wonAt + paymentTermDays
   note?: string;
 }
 
@@ -145,17 +147,40 @@ export function updateOrder(id: string, patch: Partial<Order>) {
   const all = prune(read()).map((o) => (o.id === id ? { ...o, ...patch } : o));
   write(all);
   const updated = all.find((o) => o.id === id);
-  if (updated) syncOrderToSheet(updated, "update");
+  if (updated) {
+    syncOrderToSheet(updated, "update");
+    if (updated.status === "won") syncDebtToSheet(updated);
+  }
 }
 
-export function confirmOrder(id: string) {
-  const now = new Date().toISOString();
-  const all = prune(read()).map((o) =>
-    o.id === id ? { ...o, status: "won" as OrderStatus, wonAt: now } : o,
-  );
+export function confirmOrder(id: string, termDays?: number) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const all = prune(read()).map((o) => {
+    if (o.id !== id) return o;
+    const term = termDays != null ? termDays : o.paymentTermDays;
+    const due = term != null ? new Date(now.getTime() + term * 86400000).toISOString().slice(0, 10) : o.dueDate;
+    return { ...o, status: "won" as OrderStatus, wonAt: nowIso, paymentTermDays: term, dueDate: due };
+  });
   write(all);
   const won = all.find((o) => o.id === id);
-  if (won) syncOrderToSheet(won, "won");
+  if (won) {
+    syncOrderToSheet(won, "won");
+    syncDebtToSheet(won);
+  }
+}
+
+// Cập nhật hạn thanh toán cho đơn đã chốt
+export function setPaymentTerm(id: string, termDays: number) {
+  const all = prune(read()).map((o) => {
+    if (o.id !== id) return o;
+    const base = o.wonAt ? new Date(o.wonAt) : new Date();
+    const due = new Date(base.getTime() + termDays * 86400000).toISOString().slice(0, 10);
+    return { ...o, paymentTermDays: termDays, dueDate: due };
+  });
+  write(all);
+  const o = all.find((x) => x.id === id);
+  if (o) syncDebtToSheet(o);
 }
 
 export function removeOrder(id: string) {
@@ -402,6 +427,101 @@ export function computeStats(orders: Order[], range?: Range): Stats {
   };
 }
 
+// ============================================================
+// CÔNG NỢ (Receivables) — tự sinh từ đơn đã chốt
+// Công nợ 1 đơn = total - paid (chỉ đơn đã chốt). Trả đủ -> = 0.
+// Quá hạn = còn nợ và đã qua dueDate (= wonAt + paymentTermDays).
+// ============================================================
+const DAY_MS = 86400000;
+
+export const orderDebt = (o: Order): number =>
+  o.status === "won" ? Math.max(0, o.total - o.paid) : 0;
+
+export function orderDueMs(o: Order): number | null {
+  if (o.dueDate) return new Date(o.dueDate + "T23:59:59").getTime();
+  if (o.paymentTermDays != null && o.wonAt) return new Date(o.wonAt).getTime() + o.paymentTermDays * DAY_MS;
+  return null;
+}
+
+// >0: còn N ngày tới hạn; <0: quá hạn N ngày; null: chưa đặt hạn
+export function daysUntilDue(o: Order, now = Date.now()): number | null {
+  const due = orderDueMs(o);
+  if (due == null) return null;
+  return Math.ceil((due - now) / DAY_MS);
+}
+
+export function isOverdue(o: Order, now = Date.now()): boolean {
+  if (orderDebt(o) <= 0) return false;
+  const due = orderDueMs(o);
+  return due != null && now > due;
+}
+
+export interface CustomerDebt {
+  name: string;
+  debt: number; // tổng còn nợ
+  overdue: number; // phần quá hạn
+  current: number; // chưa tới hạn
+  orderCount: number;
+  worstDaysOverdue: number;
+  nextDue: string | null; // hạn gần nhất (ISO date)
+  orders: Order[]; // các đơn còn nợ
+}
+
+export interface Receivables {
+  totalDebt: number;
+  overdueDebt: number;
+  dueSoonDebt: number;
+  customersOwing: number;
+  overdueCustomers: number;
+  byCustomer: CustomerDebt[]; // giảm dần theo nợ
+  overdueOrders: Order[];
+  dueSoonOrders: Order[]; // tới hạn trong N ngày, chưa quá hạn
+  noTermOrders: Order[]; // còn nợ nhưng chưa nhập hạn
+}
+
+export function computeReceivables(orders: Order[], now = Date.now(), dueSoonDays = 3): Receivables {
+  const owing = orders.filter((o) => orderDebt(o) > 0);
+  const map = new Map<string, CustomerDebt>();
+  let totalDebt = 0, overdueDebt = 0, dueSoonDebt = 0;
+  const overdueOrders: Order[] = [], dueSoonOrders: Order[] = [], noTermOrders: Order[] = [];
+
+  for (const o of owing) {
+    const debt = orderDebt(o);
+    totalDebt += debt;
+    const due = orderDueMs(o);
+    const over = isOverdue(o, now);
+    const d = daysUntilDue(o, now);
+    if (over) { overdueDebt += debt; overdueOrders.push(o); }
+    else if (due != null && d != null && d <= dueSoonDays) { dueSoonDebt += debt; dueSoonOrders.push(o); }
+    if (due == null) noTermOrders.push(o);
+
+    const cur = map.get(o.customer) || {
+      name: o.customer, debt: 0, overdue: 0, current: 0, orderCount: 0, worstDaysOverdue: 0, nextDue: null, orders: [],
+    };
+    cur.debt += debt;
+    if (over) cur.overdue += debt; else cur.current += debt;
+    cur.orderCount += 1;
+    cur.orders.push(o);
+    if (over && d != null) cur.worstDaysOverdue = Math.max(cur.worstDaysOverdue, -d);
+    if (due != null) {
+      const iso = new Date(due).toISOString().slice(0, 10);
+      if (!cur.nextDue || iso < cur.nextDue) cur.nextDue = iso;
+    }
+    map.set(o.customer, cur);
+  }
+
+  const byCustomer = [...map.values()].sort((a, b) => b.debt - a.debt);
+  overdueOrders.sort((a, b) => (orderDueMs(a) || 0) - (orderDueMs(b) || 0));
+  dueSoonOrders.sort((a, b) => (orderDueMs(a) || 0) - (orderDueMs(b) || 0));
+
+  return {
+    totalDebt, overdueDebt, dueSoonDebt,
+    customersOwing: byCustomer.length,
+    overdueCustomers: byCustomer.filter((c) => c.overdue > 0).length,
+    byCustomer, overdueOrders, dueSoonOrders, noTermOrders,
+  };
+}
+
 // ── React hook realtime ──
 export function useOrders(): Order[] {
   const [orders, setOrders] = useState<Order[]>(() => {
@@ -487,7 +607,9 @@ function buildSeed(): Order[] {
       const customer = customers[Math.floor(rnd() * customers.length)];
       // 80% đã chốt, 20% còn chờ (chỉ ở 2 tháng gần đây)
       const won = m > 1 ? true : rnd() > 0.35;
-      const paidRatio = won ? (rnd() > 0.5 ? 1 : 0.4 + rnd() * 0.5) : 0;
+      const paidRatio = won ? (rnd() > 0.5 ? 1 : 0.3 + rnd() * 0.5) : 0;
+      const term = [7, 10, 15, 20, 25, 30][Math.floor(rnd() * 6)];
+      const due = won ? new Date(d.getTime() + term * 86400000).toISOString().slice(0, 10) : undefined;
       orders.push({
         id: uid(),
         createdAt: iso,
@@ -500,6 +622,8 @@ function buildSeed(): Order[] {
         total,
         status: won ? "won" : "pending",
         wonAt: won ? iso : undefined,
+        paymentTermDays: won ? term : undefined,
+        dueDate: due,
         paid: Math.round(total * paidRatio),
         note: "",
       });

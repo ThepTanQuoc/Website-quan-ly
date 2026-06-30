@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Sheet, CheckCircle2, Loader2, ExternalLink, Database, Trash2, Info, Warehouse, Sparkles } from "lucide-react";
 import { Card, Pill } from "../components/ui";
-import { getSheetUrl, setSheetUrl, testSheet } from "../lib/googleSheet";
+import { getSheetUrl, setSheetUrl, testSheet, getDebtSheetUrl, setDebtSheetUrl } from "../lib/googleSheet";
 import { getInventoryUrl, setInventoryUrl } from "../lib/inventory";
 import { clearAll, useOrders } from "../lib/salesStore";
 
@@ -12,12 +12,19 @@ export default function Settings() {
   const [testRes, setTestRes] = useState<null | boolean>(null);
   const [invUrl, setInvUrl] = useState(getInventoryUrl());
   const [invSaved, setInvSaved] = useState(false);
+  const [debtUrl, setDebtUrl] = useState(getDebtSheetUrl());
+  const [debtSaved, setDebtSaved] = useState(false);
   const orders = useOrders();
 
   const saveInv = () => {
     setInventoryUrl(invUrl);
     setInvSaved(true);
     setTimeout(() => setInvSaved(false), 2500);
+  };
+  const saveDebt = () => {
+    setDebtSheetUrl(debtUrl);
+    setDebtSaved(true);
+    setTimeout(() => setDebtSaved(false), 2500);
   };
 
   const save = () => {
@@ -73,6 +80,27 @@ export default function Settings() {
             Khi chưa cấu hình, dữ liệu vẫn lưu trên trình duyệt này. Sau khi kết nối, mỗi lần chốt/sửa/xoá đơn sẽ ghi 1 dòng vào Sheet.
           </p>
         </div>
+      </Card>
+
+      <Card title="Google Sheet công nợ (tuỳ chọn)" icon={<Sheet size={16} />}
+        action={getDebtSheetUrl() ? <Pill color="green"><CheckCircle2 size={12} /> Sheet riêng</Pill> : <Pill color="slate">Dùng chung Sheet đơn hàng</Pill>}
+      >
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-slate-500">URL Apps Script cho công nợ — để trống nếu dùng chung Sheet đơn hàng ở trên</span>
+          <input
+            value={debtUrl}
+            onChange={(e) => setDebtUrl(e.target.value)}
+            placeholder="https://script.google.com/macros/s/..../exec"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-cyan-400 focus:outline-none"
+          />
+        </label>
+        <div className="mt-3">
+          <button onClick={saveDebt} className="btn-primary">{debtSaved ? <><CheckCircle2 size={16} /> Đã lưu</> : "Lưu Sheet công nợ"}</button>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Mỗi khi chốt đơn hoặc cập nhật thanh toán, hệ thống ghi 1 dòng công nợ (khách, hạn trả, còn nợ, trạng thái) vào tab <b>CongNo</b>.
+          Dùng chung file <code className="rounded bg-slate-200 px-1">Code.gs</code> — chỉ cần dùng Sheet riêng nếu muốn tách bạch.
+        </p>
       </Card>
 
       <Card title="Nguồn dữ liệu Kho hàng" icon={<Warehouse size={16} />}

@@ -8,6 +8,7 @@
 import type { Order } from "./salesStore";
 
 const URL_KEY = "tq_sheet_url";
+const DEBT_URL_KEY = "tq_debt_sheet_url";
 
 export function getSheetUrl(): string {
   try {
@@ -22,6 +23,46 @@ export function setSheetUrl(url: string) {
     localStorage.setItem(URL_KEY, url.trim());
   } catch {
     /* bỏ qua */
+  }
+}
+
+// Google Sheet RIÊNG cho công nợ (nếu để trống -> dùng chung sheet đơn hàng)
+export function getDebtSheetUrl(): string {
+  try {
+    return localStorage.getItem(DEBT_URL_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setDebtSheetUrl(url: string) {
+  try {
+    localStorage.setItem(DEBT_URL_KEY, url.trim());
+  } catch {
+    /* bỏ qua */
+  }
+}
+
+function postToSheet(url: string, body: string) {
+  if (!url) return;
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "text/plain;charset=UTF-8" });
+      if (navigator.sendBeacon(url, blob)) return;
+    }
+  } catch {
+    /* fallthrough */
+  }
+  try {
+    fetch(url, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* offline */
   }
 }
 
@@ -92,6 +133,33 @@ export function syncOrderToSheet(o: Order, action: SyncAction) {
   } catch {
     /* bỏ qua — offline */
   }
+}
+
+// Đẩy 1 bản ghi công nợ lên Google Sheet công nợ (hoặc sheet chung nếu chưa cấu hình riêng)
+export function syncDebtToSheet(o: Order) {
+  const url = getDebtSheetUrl() || getSheetUrl();
+  if (!url) return;
+  const debt = Math.max(0, o.total - o.paid);
+  const dueMs = o.dueDate
+    ? new Date(o.dueDate + "T23:59:59").getTime()
+    : o.paymentTermDays != null && o.wonAt
+      ? new Date(o.wonAt).getTime() + o.paymentTermDays * 86400000
+      : null;
+  const overdue = debt > 0 && dueMs != null && Date.now() > dueMs;
+  const payload = {
+    action: "debt",
+    id: o.id,
+    customer: o.customer,
+    wonAt: (o.wonAt || "").slice(0, 10),
+    dueDate: o.dueDate || "",
+    termDays: o.paymentTermDays ?? "",
+    total: Math.round(o.total),
+    paid: Math.round(o.paid),
+    debt: Math.round(debt),
+    status: overdue ? "QUÁ HẠN" : debt > 0 ? "Còn nợ" : "Đã trả đủ",
+    note: o.note || "",
+  };
+  postToSheet(url, JSON.stringify(payload));
 }
 
 // Kiểm tra kết nối (gửi 1 bản ghi ping). Vì no-cors không đọc được phản hồi,
