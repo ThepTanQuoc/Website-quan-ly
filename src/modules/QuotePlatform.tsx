@@ -1471,7 +1471,8 @@ export default function App() {
       const block = isPdf
         ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
         : { type: "image", source: { type: "base64", media_type: file.type || "image/png", data: b64 } };
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4000, messages: [{ role: "user", content: [block, { type: "text", text: EXTRACT_PROMPT }] }] }) });
+      const res = await fetch("/api/extract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4000, messages: [{ role: "user", content: [block, { type: "text", text: EXTRACT_PROMPT }] }] }) });
+      if (!res.ok) { let m = ""; try { m = (await res.json()).error || ""; } catch {} throw new Error(m || ("API lỗi " + res.status)); }
       const data = await res.json();
       const text = (data.content || []).filter((i) => i.type === "text").map((i) => i.text).join("\n");
       const parsed = parseItems(text);

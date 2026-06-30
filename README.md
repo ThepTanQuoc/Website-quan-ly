@@ -55,7 +55,23 @@ Web tĩnh không ghi trực tiếp Google Sheet được, nên dùng 1 **Google 
 
 Khi chưa cấu hình, dữ liệu vẫn lưu trên trình duyệt (localStorage) và app hoạt động bình thường.
 
+## Bật tính năng AI (bóc tách từ ảnh) khi deploy
+
+Nút **Bóc tách từ ảnh** (Module 1 & 2) gọi qua serverless function `api/extract.js` để giữ
+khoá API an toàn ở server. Để bật trên Vercel:
+
+1. Lấy API key tại **https://console.anthropic.com** (mục API Keys).
+2. Vào Vercel → project → **Settings → Environment Variables**, thêm:
+   - Name: `ANTHROPIC_API_KEY`
+   - Value: khoá vừa lấy
+3. Bấm **Save**, rồi vào **Deployments → Redeploy** để áp dụng.
+
+Chưa thêm khoá thì các tính năng khác vẫn chạy đầy đủ, chỉ riêng nút AI báo lỗi nhắc cấu hình.
+
 ## Ghi chú kỹ thuật
+
+- **Dashboard có bộ lọc thời gian**: Ngày / Tuần / Tháng / Quý / Năm / Tất cả — toàn bộ
+  KPI, biểu đồ và Top 10 khách hàng đổi theo kỳ đang chọn.
 
 - Dữ liệu đơn hàng lưu ở `localStorage`; có sẵn **dữ liệu mẫu** để minh hoạ dashboard
   (xoá tại **Cài đặt → Xoá dữ liệu mẫu** hoặc trang Đơn hàng).
