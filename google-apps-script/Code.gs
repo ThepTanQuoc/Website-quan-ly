@@ -55,8 +55,34 @@ function doPost(e) {
   }
 }
 
-function doGet() {
+// GET ?action=inventory  -> trả JSON tồn kho từ tab "TonKho"
+// (Cách này thay cho việc xuất bản CSV; cần tab tên "TonKho" với hàng đầu là tiêu đề)
+function doGet(e) {
+  var action = e && e.parameter ? e.parameter.action : "";
+  if (action === "inventory") {
+    return json(readInventory());
+  }
   return json({ ok: true, service: "TanQuoc Sales Sheet", time: new Date() });
+}
+
+function readInventory() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("TonKho");
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function (h) { return String(h).trim(); });
+  var out = [];
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var obj = {};
+    var hasData = false;
+    for (var j = 0; j < headers.length; j++) {
+      obj[headers[j]] = row[j];
+      if (String(row[j]).trim() !== "") hasData = true;
+    }
+    if (hasData) out.push(obj);
+  }
+  return out;
 }
 
 function getSheet() {
