@@ -23,11 +23,25 @@ var HEADERS = [
   "Doanh thu (đ)", "Đã thu (đ)", "Công nợ (đ)", "Ghi chú"
 ];
 
+var DEBT_SHEET_NAME = "CongNo";
+var DEBT_HEADERS = [
+  "Thời điểm ghi", "Mã đơn", "Khách hàng", "Ngày chốt", "Hạn trả",
+  "Số ngày", "Tổng tiền (đ)", "Đã thu (đ)", "Còn nợ (đ)", "Trạng thái", "Ghi chú"
+];
+
 function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
     if (data.action === "ping") {
       return json({ ok: true, pong: true });
+    }
+    if (data.action === "debt") {
+      var ds = getDebtSheet();
+      ds.appendRow([
+        new Date(), data.id || "", data.customer || "", data.wonAt || "", data.dueDate || "",
+        data.termDays || "", data.total || 0, data.paid || 0, data.debt || 0, data.status || "", data.note || ""
+      ]);
+      return json({ ok: true });
     }
     var sheet = getSheet();
     var row = [
@@ -94,6 +108,18 @@ function getSheet() {
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADERS);
     sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function getDebtSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DEBT_SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(DEBT_SHEET_NAME);
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(DEBT_HEADERS);
+    sheet.getRange(1, 1, 1, DEBT_HEADERS.length).setFontWeight("bold");
     sheet.setFrozenRows(1);
   }
   return sheet;

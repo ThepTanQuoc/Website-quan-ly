@@ -10,16 +10,21 @@ import {
   Wallet,
   ChevronDown,
   Database,
+  CalendarClock,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, Pill, EmptyState } from "../components/ui";
 import {
   useOrders,
   confirmOrder,
+  setPaymentTerm,
   removeOrder,
   updateOrder,
   addOrder,
   clearAll,
   categorize,
+  daysUntilDue,
+  isOverdue,
   type Order,
 } from "../lib/salesStore";
 import { fmt, fmtShort, num } from "../lib/format";
@@ -119,9 +124,15 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
   const debt = order.total - order.paid;
   const [payOpen, setPayOpen] = useState(false);
   const [pay, setPay] = useState(String(order.paid || ""));
+  const [chotOpen, setChotOpen] = useState(false);
+  const [term, setTerm] = useState("15");
+  const [termEdit, setTermEdit] = useState(String(order.paymentTermDays || ""));
+
+  const dleft = order.status === "won" && debt > 0 ? daysUntilDue(order) : null;
+  const overdue = isOverdue(order);
 
   return (
-    <div className={`rounded-2xl border bg-white/80 transition-all ${order.status === "won" ? "border-emerald-100" : "border-amber-100"}`}>
+    <div className={`rounded-2xl border bg-white/80 transition-all ${overdue ? "border-rose-200 ring-1 ring-rose-100" : order.status === "won" ? "border-emerald-100" : "border-amber-100"}`}>
       <div className="flex items-center gap-3 p-3 sm:p-4">
         <span
           className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
@@ -135,17 +146,24 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
             <span className="truncate font-semibold text-navy-950">{order.customer}</span>
             {order.status === "won" ? <Pill color="green">Đã chốt</Pill> : <Pill color="amber">Chờ xử lý</Pill>}
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-400">
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
             <span>{(order.wonAt || order.date).slice(0, 10)}</span>
             <span>·</span>
             <span className="truncate">{order.items.map((i) => i.category).filter((v, idx, a) => a.indexOf(v) === idx).join(", ") || "—"}</span>
+            {order.status === "won" && debt > 0 && order.dueDate && (
+              overdue ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-rose-600"><AlertTriangle size={11} /> Quá hạn {dleft != null ? Math.abs(dleft) : ""} ngày (hạn {order.dueDate})</span>
+              ) : (
+                <span className="inline-flex items-center gap-1 font-semibold text-cyan-600"><CalendarClock size={11} /> Hạn {order.dueDate}{dleft != null ? ` · còn ${dleft} ngày` : ""}</span>
+              )
+            )}
             <ChevronDown size={13} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
           </div>
         </div>
         <div className="text-right">
           <div className="font-bold text-navy-950">{fmtShort(order.total)}đ</div>
           {order.status === "won" && debt > 0 && (
-            <div className="text-[11px] font-semibold text-amber-600">Nợ {fmtShort(debt)}đ</div>
+            <div className={`text-[11px] font-semibold ${overdue ? "text-rose-600" : "text-amber-600"}`}>Nợ {fmtShort(debt)}đ</div>
           )}
           {order.status === "won" && debt <= 0 && (
             <div className="text-[11px] font-semibold text-emerald-600">Đã thu đủ</div>
@@ -154,9 +172,9 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
         <div className="flex shrink-0 items-center gap-1">
           {order.status === "pending" && (
             <button
-              onClick={() => confirmOrder(order.id)}
+              onClick={() => setChotOpen((v) => !v)}
               className="flex items-center gap-1 rounded-lg bg-gradient-to-r from-navy to-brand-cyan px-2.5 py-1.5 text-xs font-bold text-white"
-              title="Chốt đơn — ghi nhận doanh thu"
+              title="Chốt đơn — nhập hạn thanh toán & ghi nhận doanh thu"
             >
               <CheckCircle2 size={14} /> Chốt
             </button>
@@ -181,6 +199,28 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
           </button>
         </div>
       </div>
+
+      {chotOpen && order.status === "pending" && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-cyan-50/40 px-4 py-3">
+          <span className="flex items-center gap-1 text-xs font-semibold text-slate-600"><CalendarClock size={13} /> Hạn khách chuyển tiền:</span>
+          <div className="flex items-center gap-1">
+            {[7, 10, 15, 25, 30].map((d) => (
+              <button key={d} onClick={() => setTerm(String(d))}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-bold ${term === String(d) ? "bg-navy text-white" : "bg-white text-slate-500 ring-1 ring-slate-200"}`}>
+                {d}n
+              </button>
+            ))}
+          </div>
+          <input value={term} onChange={(e) => setTerm(e.target.value)} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm focus:border-cyan-400 focus:outline-none" />
+          <span className="text-xs text-slate-400">ngày</span>
+          <button
+            onClick={() => { confirmOrder(order.id, num(term) || 0); setChotOpen(false); }}
+            className="rounded-lg bg-gradient-to-r from-navy to-brand-cyan px-3 py-1.5 text-xs font-bold text-white"
+          >
+            <CheckCircle2 size={13} className="mr-1 inline" /> Chốt & tạo công nợ
+          </button>
+        </div>
+      )}
 
       {payOpen && order.status === "won" && (
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
@@ -211,6 +251,21 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
             Thu đủ
           </button>
           <span className="text-xs text-slate-400">Tổng {fmt(order.total)}đ</span>
+          <span className="mx-1 h-4 w-px bg-slate-200" />
+          <span className="flex items-center gap-1 text-xs font-semibold text-slate-500"><CalendarClock size={13} /> Hạn (ngày):</span>
+          <input
+            value={termEdit}
+            onChange={(e) => setTermEdit(e.target.value)}
+            className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm focus:border-cyan-400 focus:outline-none"
+            placeholder="—"
+          />
+          <button
+            onClick={() => setPaymentTerm(order.id, num(termEdit) || 0)}
+            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-navy"
+          >
+            Lưu hạn
+          </button>
+          {order.dueDate && <span className="text-xs text-slate-400">→ {order.dueDate}</span>}
         </div>
       )}
 

@@ -11,13 +11,17 @@ import {
   Activity,
   Loader2,
   Lock,
+  HandCoins,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import InventoryDashboard from "./pages/InventoryDashboard";
 import Dashboard from "./pages/Dashboard";
 import Orders from "./pages/Orders";
+import DebtManagement from "./pages/DebtManagement";
 import Settings from "./pages/Settings";
 import PasswordGate from "./components/PasswordGate";
-import { useOrders } from "./lib/salesStore";
+import { useOrders, computeReceivables } from "./lib/salesStore";
 
 // Tách bundle: Module 1 (kéo theo xlsx) và Module 2 chỉ tải khi mở.
 const QuotePlatform = lazy(() => import("./modules/QuotePlatform"));
@@ -31,32 +35,35 @@ function Loading() {
   );
 }
 
-type View = "inventory" | "director" | "quote" | "orders" | "hrc" | "settings";
+type View = "inventory" | "director" | "quote" | "orders" | "debt" | "hrc" | "settings";
 
 const NAV: { key: View; label: string; sub: string; icon: typeof Warehouse; locked?: boolean }[] = [
   { key: "inventory", label: "Kho hàng", sub: "Tồn kho & kinh doanh", icon: Warehouse },
   { key: "director", label: "Báo cáo Giám đốc", sub: "Doanh thu · lợi nhuận", icon: LineChart, locked: true },
   { key: "quote", label: "Báo giá", sub: "Module 1", icon: FileText },
   { key: "orders", label: "Đơn hàng", sub: "Chờ xử lý & đã chốt", icon: ShoppingCart },
+  { key: "debt", label: "Công nợ", sub: "Thu hồi & quá hạn", icon: HandCoins },
   { key: "hrc", label: "Bóc tách HRC", sub: "Module 2 · Cắt tấm", icon: Scissors },
   { key: "settings", label: "Cài đặt", sub: "Google Sheet & Kho", icon: SettingsIcon },
 ];
 
-function Logo() {
+function Logo({ mini = false }: { mini?: boolean }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="relative grid h-11 w-11 place-items-center rounded-xl grad-cyan shadow-glow-cyan">
+      <div className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl grad-cyan shadow-glow-cyan">
         <span className="font-display text-lg font-extrabold text-white">TQ</span>
         <span className="absolute -right-1 -top-1 h-3 w-3 animate-pulse-ring rounded-full bg-brand-cyan" />
       </div>
-      <div className="leading-tight">
-        <div className="font-display text-sm font-extrabold tracking-wide text-white">
-          THÉP TẤN QUỐC
+      {!mini && (
+        <div className="leading-tight">
+          <div className="font-display text-sm font-extrabold tracking-wide text-white">
+            THÉP TẤN QUỐC
+          </div>
+          <div className="text-[10px] font-medium uppercase tracking-[0.25em] text-cyan-300/80">
+            Sales Platform
+          </div>
         </div>
-        <div className="text-[10px] font-medium uppercase tracking-[0.25em] text-cyan-300/80">
-          Sales Platform
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -64,70 +71,105 @@ function Logo() {
 export default function App() {
   const [view, setView] = useState<View>("inventory");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("tq_nav_collapsed") === "1"; } catch { return false; }
+  });
   const orders = useOrders();
   const pending = orders.filter((o) => o.status === "pending").length;
+  const overdue = computeReceivables(orders).overdueCustomers;
 
   const go = (v: View) => {
     setView(v);
     setMobileOpen(false);
   };
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("tq_nav_collapsed", next ? "1" : "0"); } catch { /* bỏ qua */ }
+      return next;
+    });
+  };
 
-  const SideContent = (
-    <div className="flex h-full flex-col gap-2 p-4">
-      <div className="px-1 pb-4 pt-2">
-        <Logo />
+  const Side = (mini: boolean) => (
+    <div className="flex h-full flex-col gap-2 p-3">
+      <div className={`flex items-center pb-3 pt-2 ${mini ? "flex-col gap-2" : "justify-between px-1"}`}>
+        <Logo mini={mini} />
+        <button
+          onClick={toggleCollapsed}
+          title={mini ? "Mở rộng menu" : "Thu gọn menu"}
+          className="hidden h-8 w-8 place-items-center rounded-lg text-slate-300/70 transition-colors hover:bg-white/10 hover:text-white lg:grid"
+        >
+          {mini ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
       </div>
       <nav className="flex flex-1 flex-col gap-1.5">
         {NAV.map((n) => {
           const active = view === n.key;
           const Icon = n.icon;
+          const badge =
+            n.key === "orders" && pending > 0 ? { v: pending, cls: "bg-amber-400 text-navy-950" }
+            : n.key === "debt" && overdue > 0 ? { v: overdue, cls: "bg-rose-500 text-white" }
+            : null;
           return (
             <button
               key={n.key}
               onClick={() => go(n.key)}
-              className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 text-left transition-all ${
-                active
-                  ? "bg-white/10 text-white ring-1 ring-cyan-400/40"
-                  : "text-slate-300/80 hover:bg-white/5 hover:text-white"
-              }`}
+              title={mini ? n.label : undefined}
+              className={`group relative flex items-center rounded-xl transition-all ${
+                mini ? "justify-center px-0 py-3" : "gap-3 px-3 py-3 text-left"
+              } ${active ? "bg-white/10 text-white ring-1 ring-cyan-400/40" : "text-slate-300/80 hover:bg-white/5 hover:text-white"}`}
             >
               {active && (
                 <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-brand-cyan shadow-glow-cyan" />
               )}
-              <Icon size={19} className={active ? "text-brand-cyan" : ""} />
-              <span className="flex-1">
-                <span className="block text-sm font-semibold">{n.label}</span>
-                <span className="block text-[10px] uppercase tracking-wider text-slate-400/70">
-                  {n.sub}
-                </span>
+              <span className="relative">
+                <Icon size={19} className={active ? "text-brand-cyan" : ""} />
+                {mini && badge && (
+                  <span className={`absolute -right-2 -top-2 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold ${badge.cls}`}>
+                    {badge.v}
+                  </span>
+                )}
+                {mini && n.locked && (
+                  <Lock size={10} className="absolute -bottom-1.5 -right-1.5 text-slate-400" />
+                )}
               </span>
-              {n.key === "orders" && pending > 0 && (
-                <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-400 px-1 text-[11px] font-bold text-navy-950">
-                  {pending}
-                </span>
+              {!mini && (
+                <>
+                  <span className="flex-1">
+                    <span className="block text-sm font-semibold">{n.label}</span>
+                    <span className="block text-[10px] uppercase tracking-wider text-slate-400/70">{n.sub}</span>
+                  </span>
+                  {badge && (
+                    <span className={`grid h-5 min-w-5 place-items-center rounded-full px-1 text-[11px] font-bold ${badge.cls}`}>
+                      {badge.v}
+                    </span>
+                  )}
+                  {n.locked && <Lock size={13} className="text-slate-400/70" />}
+                </>
               )}
-              {n.locked && <Lock size={13} className="text-slate-400/70" />}
             </button>
           );
         })}
       </nav>
-      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-        <div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-300">
-          <Activity size={13} /> theptanquoc.vn
+      {!mini && (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-300">
+            <Activity size={13} /> theptanquoc.vn
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+            Hệ thống quản lý phòng kinh doanh — báo giá tự động & bóc tách HRC.
+          </p>
         </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-          Hệ thống quản lý phòng kinh doanh — báo giá tự động & bóc tách HRC.
-        </p>
-      </div>
+      )}
     </div>
   );
 
   return (
     <div className="relative z-10 flex min-h-screen">
       {/* Sidebar desktop */}
-      <aside className="sticky top-0 hidden h-screen w-[264px] shrink-0 lg:block">
+      <aside className={`sticky top-0 hidden h-screen shrink-0 transition-[width] duration-300 lg:block ${collapsed ? "w-[88px]" : "w-[264px]"}`}>
         <div className="m-3 h-[calc(100vh-1.5rem)] overflow-hidden rounded-3xl bg-gradient-to-b from-navy-950 to-[#0a1640] shadow-2xl ring-1 ring-white/10">
-          {SideContent}
+          {Side(collapsed)}
         </div>
       </aside>
 
@@ -138,11 +180,11 @@ export default function App() {
           <div className="absolute left-0 top-0 h-full w-[280px] bg-gradient-to-b from-navy-950 to-[#0a1640] shadow-2xl">
             <button
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-3 text-slate-400 hover:text-white"
+              className="absolute right-3 top-3 z-10 text-slate-400 hover:text-white"
             >
               <X size={20} />
             </button>
-            {SideContent}
+            {Side(false)}
           </div>
         </div>
       )}
@@ -164,6 +206,7 @@ export default function App() {
             </PasswordGate>
           )}
           {view === "orders" && <Orders />}
+          {view === "debt" && <DebtManagement />}
           {view === "hrc" && (
             <Suspense fallback={<Loading />}>
               <HrcCutting />

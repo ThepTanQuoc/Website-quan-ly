@@ -44,6 +44,7 @@ import {
   useOrders,
   computeStats,
   computeDirectorMetrics,
+  computeReceivables,
   trendSeries,
   periodRange,
   PERIOD_CURRENT,
@@ -85,6 +86,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => 
   const trend = trendSeries(orders, period);
   const profit = computeProfit(s.revenue, cfg, period);
   const m = computeDirectorMetrics(orders, range);
+  const recv = computeReceivables(orders);
 
   // Tăng trưởng kỳ hiện tại so với kỳ trước (2 bucket cuối của chuỗi xu hướng)
   const cur = trend[trend.length - 1]?.revenue || 0;
@@ -233,6 +235,32 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (v: string) => 
           <Metric label="Lợi nhuận ròng" value={fmtShort(profit.netProfit) + "đ"} sub={`biên ${profit.netMargin.toFixed(0)}%`} icon={<PiggyBank size={15} />} accent={profit.netProfit >= 0 ? "green" : "red"} />
         </div>
       </Card>
+
+      {/* Overdue receivables */}
+      {recv.overdueDebt > 0 && (
+        <Card
+          title="Công nợ quá hạn cần thu hồi"
+          icon={<AlertCircle size={16} />}
+          action={<Pill color="red">{recv.overdueCustomers} khách · {fmtShort(recv.overdueDebt)}đ</Pill>}
+        >
+          <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+            {recv.byCustomer.filter((c) => c.overdue > 0).slice(0, 8).map((c) => (
+              <div key={c.name} className="flex items-center justify-between gap-2 rounded-xl bg-rose-50/60 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-navy-950">{c.name}</div>
+                  <div className="text-[11px] text-rose-500">Quá hạn tới {c.worstDaysOverdue} ngày · {c.orderCount} đơn</div>
+                </div>
+                <span className="shrink-0 text-sm font-bold text-rose-600">{fmtShort(c.overdue)}đ</span>
+              </div>
+            ))}
+          </div>
+          {onNavigate && (
+            <button onClick={() => onNavigate("debt")} className="mt-3 text-xs font-semibold text-cyan-600 hover:underline">
+              Mở Quản lý công nợ →
+            </button>
+          )}
+        </Card>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
