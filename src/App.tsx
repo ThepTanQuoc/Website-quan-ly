@@ -21,7 +21,8 @@ import Orders from "./pages/Orders";
 import DebtManagement from "./pages/DebtManagement";
 import Settings from "./pages/Settings";
 import PasswordGate from "./components/PasswordGate";
-import { useOrders, computeReceivables } from "./lib/salesStore";
+import { useOrders, computeReceivables, type Order } from "./lib/salesStore";
+import { requestOpenQuote } from "./lib/quoteBridge";
 
 // Tách bundle: Module 1 (kéo theo xlsx) và Module 2 chỉ tải khi mở.
 const QuotePlatform = lazy(() => import("./modules/QuotePlatform"));
@@ -81,6 +82,10 @@ export default function App() {
   const go = (v: View) => {
     setView(v);
     setMobileOpen(false);
+  };
+  const openQuote = (order: Order, preview = false) => {
+    requestOpenQuote(order, preview);
+    go("quote");
   };
   const toggleCollapsed = () => {
     setCollapsed((c) => {
@@ -205,7 +210,7 @@ export default function App() {
               <Dashboard onNavigate={(v) => go(v as View)} />
             </PasswordGate>
           )}
-          {view === "orders" && <Orders />}
+          {view === "orders" && <Orders onOpenQuote={openQuote} />}
           {view === "debt" && <DebtManagement />}
           {view === "hrc" && (
             <Suspense fallback={<Loading />}>
