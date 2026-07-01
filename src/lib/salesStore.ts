@@ -37,8 +37,8 @@ export interface Order {
   note?: string;
 }
 
-const KEY = "tq_orders_v1";
-const SEED_FLAG = "tq_seeded_v1";
+const KEY = "tq_orders_v2";
+const SEED_FLAG = "tq_seeded_v2";
 const EVENT = "tq-orders-changed";
 const ABANDON_DAYS = 21; // đơn chờ quá 21 ngày mà chưa chốt -> tự xoá
 
@@ -590,9 +590,9 @@ function buildSeed(): Order[] {
     return seed / 233280;
   };
   for (let m = 5; m >= 0; m--) {
-    const count = 3 + Math.floor(rnd() * 4);
+    const count = 16 + Math.floor(rnd() * 12); // ~16-27 đơn/tháng cho dữ liệu dày, dự báo có ý nghĩa
     for (let k = 0; k < count; k++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - m, 2 + Math.floor(rnd() * 25));
+      const d = new Date(now.getFullYear(), now.getMonth() - m, 1 + Math.floor(rnd() * 27));
       const iso = d.toISOString();
       const nItems = 1 + Math.floor(rnd() * 3);
       const items: OrderItem[] = [];

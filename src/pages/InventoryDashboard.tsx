@@ -6,15 +6,18 @@ import {
 import {
   Warehouse, Boxes, Layers, AlertTriangle, RefreshCw, Search, CheckCircle2, TrendingUp, MapPin, Package,
   Database, X, Activity, Gauge, ArrowRight, Bell, Calendar, ShoppingBag, ChevronRight, TrendingDown, Clock,
+  BrainCircuit, Globe, ExternalLink, Loader2, Info,
 } from "lucide-react";
 import { Card, Pill, EmptyState } from "../components/ui";
 import PeriodSelect from "../components/PeriodSelect";
 import { useInventory, type InvItem } from "../lib/inventory";
 import { useOrders, computeStats, periodRange, PERIOD_CURRENT, type Period } from "../lib/salesStore";
 import {
-  forecastCategory, depletionByCategory, buildCategoryDetail, STOCK_STATUS_META,
-  type DepletionRow, type CategoryDetail,
+  forecastCategory, depletionByCategory, buildCategoryDetail, STOCK_STATUS_META, MODELS,
+  categoryAccuracies, bestModel,
+  type DepletionRow, type CategoryDetail, type ModelId,
 } from "../lib/forecast";
+import { getMarketSignal, marketPctFor, fetchMarketSignal, type MarketSignal } from "../lib/market";
 import { fmt, fmtShort } from "../lib/format";
 
 const INV_COLORS: Record<string, string> = {
@@ -41,6 +44,11 @@ export default function InventoryDashboard() {
   const [showAlert, setShowAlert] = useState(false);
   const [fcCat, setFcCat] = useState("");
   const [detailCat, setDetailCat] = useState<string | null>(null);
+  const [model, setModel] = useState<ModelId>("ewma");
+  const [market, setMarket] = useState<MarketSignal>(() => getMarketSignal());
+  const [mktLoading, setMktLoading] = useState(false);
+  const [mktErr, setMktErr] = useState("");
+  const [showMkt, setShowMkt] = useState(false);
 
   const stats = computeStats(orders, periodRange(period));
 
@@ -48,16 +56,36 @@ export default function InventoryDashboard() {
   const depletion = useMemo(() => depletionByCategory(items, orders), [items, orders]);
   const atRisk = depletion.filter((r) => r.status === "critical" || r.status === "warn");
 
-  // Nhóm để dự báo nhu cầu (mặc định nhóm có nguy cơ cao nhất, hoặc nhóm tồn nhiều nhất)
-  const fcCategory = fcCat || atRisk[0]?.category || depletion[0]?.category || "";
+  // Nhóm để dự báo nhu cầu (mặc định nhóm tiêu thụ nhiều nhất -> biểu đồ có ý nghĩa nhất)
+  const fcDefault = useMemo(() => {
+    const byRate = depletion.filter((r) => r.rateKgWeek > 0).sort((a, b) => b.rateKgWeek - a.rateKgWeek);
+    return byRate[0]?.category || depletion[0]?.category || "";
+  }, [depletion]);
+  const fcCategory = fcCat || fcDefault;
+  const marketPct = (cat: string) => (model === "market" ? marketPctFor(market, cat) : 0);
   const forecast = useMemo(
-    () => (fcCategory ? forecastCategory(orders, fcCategory) : null),
-    [orders, fcCategory],
+    () => (fcCategory ? forecastCategory(orders, fcCategory, { model, marketPctAnnual: marketPct(fcCategory) }) : null),
+    [orders, fcCategory, model, market],
   );
   const detail = useMemo(
-    () => (detailCat ? buildCategoryDetail(orders, items, detailCat) : null),
-    [orders, items, detailCat],
+    () => (detailCat ? buildCategoryDetail(orders, items, detailCat, 4, { model, marketPctAnnual: marketPct(detailCat) }) : null),
+    [orders, items, detailCat, model, market],
   );
+  // Độ chính xác của tất cả mô hình cho nhóm đang xem (để so sánh + đề xuất)
+  const accById = useMemo(
+    () => (fcCategory ? categoryAccuracies(orders, fcCategory, { marketPctAnnual: marketPctFor(market, fcCategory) }) : ({} as Record<ModelId, number | null>)),
+    [orders, fcCategory, market],
+  );
+  const recommended = bestModel(accById);
+
+  const updateMarket = () => {
+    setMktLoading(true);
+    setMktErr("");
+    fetchMarketSignal()
+      .then((m) => setMarket(m))
+      .catch((e) => setMktErr(e.message || "Không cập nhật được thị trường"))
+      .finally(() => setMktLoading(false));
+  };
 
   const byCat = useMemo(() => {
     const m = new Map<string, { weight: number; qty: number; items: number }>();
@@ -195,6 +223,87 @@ export default function InventoryDashboard() {
             </select>
           }
         >
+          {/* Chọn mô hình + độ chính xác từng mô hình */}
+          <div className="mb-3 rounded-xl bg-slate-50 p-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-500"><BrainCircuit size={14} className="text-cyan-600" /> Mô hình:</span>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value as ModelId)}
+                className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-navy focus:border-cyan-400 focus:outline-none"
+              >
+                {MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}{accById[m.id] != null ? ` — ~${accById[m.id]}%` : ""}{m.id === recommended ? " ⭐" : ""}
+                  </option>
+                ))}
+              </select>
+              {forecast && (
+                <Pill color={forecast.accuracy == null ? "slate" : forecast.accuracy >= 70 ? "green" : forecast.accuracy >= 50 ? "amber" : "red"}>
+                  <Gauge size={12} /> Độ chính xác {forecast.accuracy == null ? "—" : "~" + forecast.accuracy + "%"}
+                </Pill>
+              )}
+              {recommended && recommended !== model && (
+                <button onClick={() => setModel(recommended)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">
+                  ⭐ Dùng mô hình chính xác nhất ({MODELS.find((m) => m.id === recommended)?.name} ~{accById[recommended]}%)
+                </button>
+              )}
+              {model === "market" && (
+                <button onClick={() => setShowMkt((v) => !v)} className="inline-flex items-center gap-1 rounded-lg bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-200">
+                  <Globe size={12} /> Thị trường thép VN ({market.asOf}){market.live ? " · realtime" : ""}
+                </button>
+              )}
+            </div>
+            {/* So sánh độ chính xác các mô hình */}
+            <div className="mt-2.5 space-y-1">
+              {MODELS.map((m) => {
+                const a = accById[m.id];
+                const isBest = m.id === recommended;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setModel(m.id)}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors ${m.id === model ? "bg-white ring-1 ring-cyan-300" : "hover:bg-white/70"}`}
+                  >
+                    <span className={`w-40 shrink-0 truncate text-[11px] font-semibold ${m.id === model ? "text-navy" : "text-slate-500"}`}>
+                      {m.name}{isBest ? " ⭐" : ""}
+                    </span>
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
+                      <span className="block h-full rounded-full" style={{ width: `${a ?? 0}%`, background: a == null ? "#cbd5e1" : a >= 70 ? "#10b981" : a >= 50 ? "#f59e0b" : "#ef4444" }} />
+                    </span>
+                    <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-600">{a == null ? "—" : "~" + a + "%"}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-400">{MODELS.find((m) => m.id === model)?.desc} · Độ chính xác ước tính bằng kiểm định ngược (backtest) trên lịch sử bán thực tế.</p>
+          </div>
+
+          {model === "market" && showMkt && (
+            <div className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/50 p-3 text-xs">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1 font-semibold text-navy-950"><Info size={13} /> Cầu ngành thép (VSA/web) · cập nhật {market.asOf}</span>
+                <button onClick={updateMarket} disabled={mktLoading} className="inline-flex items-center gap-1 rounded-lg bg-navy px-2 py-1 font-semibold text-white disabled:opacity-50">
+                  {mktLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Cập nhật realtime
+                </button>
+              </div>
+              <p className="text-slate-600">{market.summary}</p>
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-slate-500">
+                <span>Cầu toàn ngành <b className="text-navy">+{market.demandTrendPct}%/năm</b></span>
+                <span>Giá HRC <b className="text-navy">+{market.priceTrendPct}%</b></span>
+                <span>Nhóm {fcCategory}: <b className="text-cyan-700">+{marketPctFor(market, fcCategory)}%/năm</b></span>
+              </div>
+              {mktErr && <p className="mt-1 text-rose-500">⚠ {mktErr} (đang dùng số liệu nghiên cứu sẵn).</p>}
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {market.sources.map((s, i) => (
+                  <a key={i} href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-cyan-600 hover:underline">
+                    <ExternalLink size={11} /> {s.title}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {!forecast ? (
             <EmptyState title="Chưa đủ dữ liệu" hint="Cần lịch sử đơn đã chốt để dự báo." />
           ) : (
@@ -388,7 +497,10 @@ function CategoryDetailModal({ detail, onClose }: { detail: CategoryDetail; onCl
         {/* Forecast + projection charts */}
         <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-slate-100 p-3">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Nhu cầu kg/tuần (thực tế + dự báo)</div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Nhu cầu kg/tuần (thực tế + dự báo)</span>
+              <span className="text-[11px] font-semibold text-cyan-600">{MODELS.find((m) => m.id === detail.forecast.model)?.name} · {detail.forecast.accuracy == null ? "—" : "~" + detail.forecast.accuracy + "%"}</span>
+            </div>
             <ResponsiveContainer width="100%" height={180}>
               <LineChart data={detail.forecast.data} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f8" vertical={false} />

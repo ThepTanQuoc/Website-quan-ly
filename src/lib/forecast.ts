@@ -16,6 +16,14 @@ const startOfWeek = (d: Date) => {
 };
 const orderTime = (o: Order) => new Date(o.wonAt || o.date || o.createdAt).getTime();
 
+// Khớp nhóm hàng tồn kho (vd "Thép hình") với nhóm hàng bán ("Thép hình I/H/U/V")
+function catMatch(orderCat: string, target: string): boolean {
+  const a = (orderCat || "").toLowerCase().trim();
+  const b = (target || "").toLowerCase().trim();
+  if (!a || !b) return false;
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
 export interface WeekPoint {
   label: string; // dd/mm
   kg: number;
@@ -36,7 +44,7 @@ export function weeklyConsumption(
     const idx = weeksBack - 1 - Math.floor((base - startOfWeek(new Date(ts)).getTime()) / WEEK_MS);
     if (idx < 0 || idx >= weeksBack) continue;
     for (const it of o.items) {
-      if (it.category === category) buckets[idx] += it.kl;
+      if (catMatch(it.category, category)) buckets[idx] += it.kl;
     }
   }
   return buckets.map((kg, i) => {
@@ -82,37 +90,158 @@ export function weeklyRate(history: WeekPoint[]): number {
   return recent;
 }
 
-export interface ForecastSeries {
-  data: { label: string; actual: number | null; forecast: number | null }[];
-  rate: number; // kg/tuần dự kiến
-  trendUp: boolean;
+// ═══════════ NHIỀU MÔ HÌNH DỰ BÁO ═══════════
+export type ModelId = "ewma" | "linear" | "ma" | "seasonal" | "market";
+export interface ModelMeta { id: ModelId; name: string; desc: string; needsMarket?: boolean }
+export const MODELS: ModelMeta[] = [
+  { id: "ewma", name: "Làm mượt mũ (Holt)", desc: "Bám xu hướng gần đây, phản ứng nhanh với biến động." },
+  { id: "linear", name: "Hồi quy tuyến tính", desc: "Đường xu hướng dài hạn, ổn định & ít nhiễu." },
+  { id: "ma", name: "Trung bình trượt 4 tuần", desc: "Trung bình gần đây, dự báo phẳng — thận trọng." },
+  { id: "seasonal", name: "Thời vụ (lặp chu kỳ 4 tuần)", desc: "Lặp lại mẫu gần nhất — hợp hàng có mùa vụ." },
+  { id: "market", name: "Kết hợp thị trường thép VN", desc: "Nền thống kê × dự báo tăng trưởng cầu ngành (VSA/web).", needsMarket: true },
+];
+
+const mean = (a: number[]) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
+
+// Làm mượt nhẹ (trung bình trượt 3 điểm) cho ĐẦU VÀO mô hình — giảm nhiễu thời điểm,
+// giúp mô hình dự báo tổng lượng sát hơn. Đường "thực tế" hiển thị vẫn là số thô.
+function smooth(ys: number[]): number[] {
+  if (ys.length < 3) return ys.slice();
+  return ys.map((_, i) => {
+    const a = ys[i - 1] ?? ys[i];
+    const b = ys[i];
+    const c = ys[i + 1] ?? ys[i];
+    return (a + b + c) / 3;
+  });
 }
 
-// Chuỗi lịch sử + dự báo `horizon` tuần tới (cho line chart)
-export function forecastCategory(
+// wkGrowth = tăng trưởng cầu mỗi tuần (cho mô hình market), vd 0.0023 ~ 12%/năm
+export function predictFuture(ys: number[], model: ModelId, horizon: number, wkGrowth = 0): number[] {
+  const n = ys.length;
+  if (n === 0) return new Array(horizon).fill(0);
+  const out: number[] = [];
+
+  if (model === "ma") {
+    const m = mean(ys.slice(-4));
+    for (let h = 1; h <= horizon; h++) out.push(Math.max(0, Math.round(m)));
+    return out;
+  }
+  if (model === "linear") {
+    const { a, b } = linreg(ys);
+    for (let h = 1; h <= horizon; h++) out.push(Math.max(0, Math.round(a + b * (n - 1 + h))));
+    return out;
+  }
+  if (model === "seasonal") {
+    const period = 4;
+    if (n < period) return predictFuture(ys, "ma", horizon, wkGrowth);
+    for (let h = 1; h <= horizon; h++) out.push(Math.max(0, Math.round(ys[n - period + ((h - 1) % period)])));
+    return out;
+  }
+  // ewma (Holt tuyến tính) — cũng là nền cho "market". Beta nhỏ để tránh ngoại suy xu hướng quá đà.
+  const alpha = 0.4, beta = 0.12;
+  let level = ys[0], trend = n > 1 ? (ys[n - 1] - ys[0]) / (n - 1) : 0;
+  for (let i = 1; i < n; i++) {
+    const prev = level;
+    level = alpha * ys[i] + (1 - alpha) * (level + trend);
+    trend = beta * (level - prev) + (1 - beta) * trend;
+  }
+  for (let h = 1; h <= horizon; h++) {
+    let v = level + h * trend;
+    if (model === "market") v *= Math.pow(1 + wkGrowth, h);
+    out.push(Math.max(0, Math.round(v)));
+  }
+  return out;
+}
+
+// Ước tính độ chính xác bằng backtest walk-forward. Kết hợp sai số TỔNG LƯỢNG
+// (quan trọng cho đặt hàng) và sai số theo tuần (dạng SMAPE, ít nhạy với nhiễu thời điểm).
+export function backtestAccuracy(ys: number[], model: ModelId, wkGrowth = 0): number | null {
+  const n = ys.length;
+  const total = ys.reduce((s, x) => s + x, 0);
+  if (n < 6 || total <= 0) return null;
+  const k = Math.min(4, Math.max(2, Math.floor(n / 3)));
+  const train = ys.slice(0, n - k);
+  const actual = ys.slice(n - k);
+  const pred = predictFuture(smooth(train), model, k, wkGrowth);
+  const aSum = actual.reduce((s, x) => s + x, 0);
+  const pSum = pred.reduce((s, x) => s + x, 0);
+  const volErr = aSum > 0 ? Math.abs(aSum - pSum) / aSum : pSum > 0 ? 1.5 : 0;
+  const avg = aSum / k;
+  let wErr = 0;
+  for (let i = 0; i < k; i++) {
+    const denom = Math.max(actual[i], avg, 1);
+    wErr += Math.abs(actual[i] - pred[i]) / denom;
+  }
+  const perWeek = Math.min(1.5, wErr / k);
+  // Suy giảm mũ: luôn phân hoá giữa các mô hình, không bị "kẹt sàn" đồng loạt
+  const combined = 0.7 * volErr + 0.3 * perWeek;
+  return Math.round(Math.max(12, Math.min(96, 100 * Math.exp(-combined))));
+}
+
+export interface ForecastSeries {
+  data: { label: string; actual: number | null; forecast: number | null }[];
+  rate: number; // kg/tuần dự kiến (theo mô hình)
+  trendUp: boolean;
+  accuracy: number | null; // % độ chính xác ước tính (backtest)
+  model: ModelId;
+}
+
+// Độ chính xác ước tính của TẤT CẢ mô hình cho 1 nhóm (để so sánh & đề xuất)
+export function categoryAccuracies(
   orders: Order[],
   category: string,
-  horizon = 4,
-  weeksBack = 10,
-  now = new Date(),
-): ForecastSeries {
+  opts: { marketPctAnnual?: number; weeksBack?: number; now?: Date } = {},
+): Record<ModelId, number | null> {
+  const { marketPctAnnual = 0, weeksBack = 12, now = new Date() } = opts;
+  const ys = weeklyConsumption(orders, category, weeksBack, now).map((p) => p.kg);
+  const res = {} as Record<ModelId, number | null>;
+  for (const m of MODELS) {
+    const wk = m.id === "market" ? marketPctAnnual / 100 / 52 : 0;
+    res[m.id] = backtestAccuracy(ys, m.id, wk);
+  }
+  return res;
+}
+
+// Mô hình có độ chính xác cao nhất
+export function bestModel(acc: Record<ModelId, number | null>): ModelId | null {
+  let best: ModelId | null = null;
+  let bestVal = -1;
+  (Object.keys(acc) as ModelId[]).forEach((k) => {
+    const v = acc[k];
+    if (v != null && v > bestVal) { bestVal = v; best = k; }
+  });
+  return best;
+}
+
+export interface ForecastOpts {
+  model?: ModelId;
+  horizon?: number;
+  weeksBack?: number;
+  marketPctAnnual?: number; // tăng trưởng cầu ngành/năm (%) cho mô hình market
+  now?: Date;
+}
+
+// Chuỗi lịch sử + dự báo `horizon` tuần tới (cho line chart), theo mô hình chọn
+export function forecastCategory(orders: Order[], category: string, opts: ForecastOpts = {}): ForecastSeries {
+  const { model = "ewma", horizon = 4, weeksBack = 12, marketPctAnnual = 0, now = new Date() } = opts;
+  const wkGrowth = marketPctAnnual / 100 / 52;
   const hist = weeklyConsumption(orders, category, weeksBack, now);
-  const ys = hist.map((p) => p.kg);
-  const { a, b } = linreg(ys);
-  const n = ys.length;
+  const ysRaw = hist.map((p) => p.kg);
+  const ys = smooth(ysRaw); // đầu vào mô hình đã làm mượt
 
   const data: ForecastSeries["data"] = hist.map((p) => ({ label: p.label, actual: p.kg, forecast: null }));
-  // điểm nối: gắn forecast = actual ở tuần cuối để 2 đường liền nhau
   if (data.length) data[data.length - 1].forecast = data[data.length - 1].actual;
 
+  const preds = predictFuture(ys, model, horizon, wkGrowth);
   const base = startOfWeek(now).getTime();
-  for (let h = 1; h <= horizon; h++) {
-    const x = n - 1 + h;
-    const pred = Math.max(0, Math.round(a + b * x));
-    const d = new Date(base + h * WEEK_MS);
+  preds.forEach((pred, i) => {
+    const d = new Date(base + (i + 1) * WEEK_MS);
     data.push({ label: d.getDate() + "/" + (d.getMonth() + 1), actual: null, forecast: pred });
-  }
-  return { data, rate: weeklyRate(hist), trendUp: b > 0 };
+  });
+
+  const baseline = weeklyRate(hist);
+  const rate = preds[0] > 0 ? preds[0] : baseline;
+  return { data, rate, trendUp: preds[preds.length - 1] >= (preds[0] || baseline), accuracy: backtestAccuracy(ysRaw, model, wkGrowth), model };
 }
 
 export type StockStatus = "critical" | "warn" | "ok" | "idle";
@@ -193,16 +322,19 @@ export function buildCategoryDetail(
   items: InvItem[],
   category: string,
   targetWeeks = 4,
-  now = new Date(),
+  opts: ForecastOpts = {},
 ): CategoryDetail {
+  const { model = "ewma", marketPctAnnual = 0, now = new Date() } = opts;
+  const wkGrowth = marketPctAnnual / 100 / 52;
   const list = items.filter((it) => it.category === category);
   const stockKg = list.reduce((s, it) => s + it.weightKg, 0);
-  const history = weeklyConsumption(orders, category, 10, now);
-  const ys = history.map((p) => p.kg);
-  const rate = weeklyRate(history);
-  const { a, b } = linreg(ys);
-  const n = ys.length;
-  const predict = (h: number) => Math.max(0, a + b * (n - 1 + h));
+  const history = weeklyConsumption(orders, category, 12, now);
+  const ys = smooth(history.map((p) => p.kg));
+
+  // Nhịp tiêu thụ theo mô hình (TB 4 tuần dự báo), fallback trung bình trọng số
+  const preds16 = predictFuture(ys, model, 16, wkGrowth);
+  const baseline = weeklyRate(history);
+  const rate = mean(preds16.slice(0, 4)) > 0 ? mean(preds16.slice(0, 4)) : baseline;
 
   const weeksLeft = rate > 0 ? stockKg / rate : Infinity;
   const nowMs = now.getTime();
@@ -213,8 +345,7 @@ export function buildCategoryDetail(
   if (rate > 0) {
     let remaining = stockKg;
     for (let h = 1; h <= 16 && remaining > 0; h++) {
-      let demand = predict(h);
-      demand = Math.max(demand, rate * 0.5); // tránh dự báo trôi về 0 -> không bao giờ hết
+      const demand = Math.max(preds16[h - 1] || 0, rate * 0.5); // tránh trôi về 0
       remaining -= demand;
       const wk = new Date(base + h * WEEK_MS);
       projection.push({
@@ -256,12 +387,12 @@ export function buildCategoryDetail(
     stockKg,
     itemCount: list.length,
     rateKgWeek: rate,
-    trendUp: b > 0,
+    trendUp: preds16[3] >= (preds16[0] || rate),
     weeksLeft,
     stockoutDate: isFinite(weeksLeft) ? fmtDate(nowMs + weeksLeft * WEEK_MS) : "—",
     targetWeeks,
     reorderQty: Math.max(0, Math.round(rate * targetWeeks - stockKg)),
-    forecast: forecastCategory(orders, category, 6, 10, now),
+    forecast: forecastCategory(orders, category, { model, horizon: 6, marketPctAnnual, now }),
     history,
     projection,
     items: itemDetails,
