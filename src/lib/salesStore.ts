@@ -35,6 +35,14 @@ export interface Order {
   paymentTermDays?: number; // số ngày khách phải chuyển tiền (deal riêng từng khách)
   dueDate?: string; // hạn chuyển tiền (ISO date) = wonAt + paymentTermDays
   note?: string;
+  quote?: QuoteSnapshot; // ảnh chụp báo giá gốc (Module 1) để mở lại xem/sửa
+}
+
+// Ảnh chụp dữ liệu báo giá gốc (mặt hàng thô của Module 1) để tái tạo báo giá
+export interface QuoteSnapshot {
+  items: any[]; // mảng item thô của Module 1 (giữ đủ day/rong/dai/donGia/dvt...)
+  place?: string;
+  terms?: string;
 }
 
 const KEY = "tq_orders_v2";
@@ -134,7 +142,10 @@ export function addOrder(o: Partial<Order>): Order {
     status: o.status || "pending",
     wonAt: o.status === "won" ? o.wonAt || now : o.wonAt,
     paid: num(o.paid),
+    paymentTermDays: o.paymentTermDays,
+    dueDate: o.dueDate,
     note: o.note || "",
+    quote: o.quote,
   };
   const all = prune(read());
   all.push(order);

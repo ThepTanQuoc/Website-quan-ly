@@ -12,6 +12,8 @@ import {
   Database,
   CalendarClock,
   AlertTriangle,
+  FileText,
+  Pencil,
 } from "lucide-react";
 import { Card, Pill, EmptyState } from "../components/ui";
 import {
@@ -31,7 +33,7 @@ import { fmt, fmtShort, num } from "../lib/format";
 
 type Tab = "all" | "pending" | "won";
 
-export default function Orders() {
+export default function Orders({ onOpenQuote }: { onOpenQuote?: (o: Order, preview?: boolean) => void }) {
   const orders = useOrders();
   const [tab, setTab] = useState<Tab>("all");
   const [q, setQ] = useState("");
@@ -107,6 +109,7 @@ export default function Orders() {
                 order={o}
                 expanded={expanded === o.id}
                 onToggle={() => setExpanded(expanded === o.id ? null : o.id)}
+                onOpenQuote={onOpenQuote}
               />
             ))
           )}
@@ -120,7 +123,7 @@ export default function Orders() {
   );
 }
 
-function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boolean; onToggle: () => void }) {
+function OrderRow({ order, expanded, onToggle, onOpenQuote }: { order: Order; expanded: boolean; onToggle: () => void; onOpenQuote?: (o: Order, preview?: boolean) => void }) {
   const debt = order.total - order.paid;
   const [payOpen, setPayOpen] = useState(false);
   const [pay, setPay] = useState(String(order.paid || ""));
@@ -186,6 +189,15 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
               title="Cập nhật đã thu / công nợ"
             >
               <Wallet size={16} />
+            </button>
+          )}
+          {onOpenQuote && (
+            <button
+              onClick={() => onOpenQuote(order, false)}
+              className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-cyan-50 hover:text-cyan-600"
+              title="Mở báo giá để xem / sửa mặt hàng"
+            >
+              <Pencil size={15} />
             </button>
           )}
           <button
@@ -271,6 +283,22 @@ function OrderRow({ order, expanded, onToggle }: { order: Order; expanded: boole
 
       {expanded && (
         <div className="border-t border-slate-100 px-4 py-3">
+          {onOpenQuote && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              <button
+                onClick={() => onOpenQuote(order, true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-navy hover:border-cyan-300 hover:bg-cyan-50"
+              >
+                <FileText size={14} /> Xem báo giá đã gửi
+              </button>
+              <button
+                onClick={() => onOpenQuote(order, false)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-navy to-brand-cyan px-3 py-2 text-xs font-semibold text-white"
+              >
+                <Pencil size={14} /> Sửa / thêm mặt hàng
+              </button>
+            </div>
+          )}
           {order.project && <div className="mb-1 text-xs text-slate-500">Công trình: <b>{order.project}</b></div>}
           {order.quoter && <div className="mb-2 text-xs text-slate-500">Người báo giá: <b>{order.quoter}</b></div>}
           <table className="w-full text-xs">

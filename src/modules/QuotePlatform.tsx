@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import { Building2, Upload, FileSpreadsheet, Plus, Trash2, Loader2, ArrowLeft, ArrowRight, Save, Download, AlertTriangle, CheckCircle2, Eye, Printer, X, Lock, Image as ImageIcon, BookOpen, ClipboardPaste, ShoppingCart, Clock } from "lucide-react";
-import { addOrder, categorize } from "../lib/salesStore";
+import { addOrder, updateOrder, categorize } from "../lib/salesStore";
+import { takePendingQuote, onOpenQuote } from "../lib/quoteBridge";
 import { fmtShort } from "../lib/format";
 
 const RED = "#e11d2a";
@@ -1333,7 +1334,7 @@ function NhanVienSelect({ value, onChange, inputCls, list = NHAN_VIEN }) {
 // CHỐT ĐƠN — ghi nhận doanh thu vào hệ thống (Dashboard + Google Sheet)
 // Tạo đơn từ báo giá hiện tại: "Chờ xử lý" hoặc "Chốt đơn" ngay.
 // ============================================================
-function ChotDonPanel({ customer, quoter, items, totalKL, totalTien }) {
+function ChotDonPanel({ customer, quoter, items, totalKL, totalTien, place, terms, editingId, onSaved }) {
   const [done, setDone] = useState("");
   const valid = items.length > 0 && totalTien > 0;
 
@@ -1350,18 +1351,25 @@ function ChotDonPanel({ customer, quoter, items, totalKL, totalTien }) {
 
   const create = (status) => {
     if (!valid) return;
-    addOrder({
+    const payload = {
       customer: customer.name || "Khách lẻ",
       project: customer.project || "",
       quoter,
       items: buildOrderItems(),
       totalKL: num(totalKL),
       total: num(totalTien),
-      status,
-      paid: 0,
-    });
+      quote: { items, place, terms }, // lưu báo giá gốc để mở lại xem/sửa
+    };
+    if (editingId) {
+      const patch = { ...payload, status };
+      if (status === "won") patch.wonAt = new Date().toISOString();
+      updateOrder(editingId, patch);
+    } else {
+      addOrder({ ...payload, status, paid: 0 });
+    }
     setDone(status);
-    setTimeout(() => setDone(""), 3500);
+    if (onSaved) onSaved();
+    setTimeout(() => setDone(""), 4000);
   };
 
   return (
@@ -1369,9 +1377,10 @@ function ChotDonPanel({ customer, quoter, items, totalKL, totalTien }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-sm font-bold" style={{ color: NAVY }}>
-            <ShoppingCart size={16} /> Ghi nhận đơn hàng
+            <ShoppingCart size={16} /> {editingId ? "Cập nhật đơn hàng" : "Ghi nhận đơn hàng"}
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
+            {editingId && <span className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">ĐANG SỬA ĐƠN</span>}
             Khách: <b>{customer.name || "(chưa nhập)"}</b> · Doanh thu:{" "}
             <b style={{ color: RED }}>{fmtShort(totalTien)} đ</b> · {items.length} mặt hàng
           </div>
@@ -1382,7 +1391,7 @@ function ChotDonPanel({ customer, quoter, items, totalKL, totalTien }) {
             disabled={!valid}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-semibold text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100 disabled:opacity-40"
             title="Khách chưa chốt — đưa vào mục Chờ xử lý">
-            <Clock size={15} /> Lưu chờ xử lý
+            <Clock size={15} /> {editingId ? "Lưu (chờ xử lý)" : "Lưu chờ xử lý"}
           </button>
           <button
             onClick={() => create("won")}
@@ -1397,9 +1406,11 @@ function ChotDonPanel({ customer, quoter, items, totalKL, totalTien }) {
       {done && (
         <div className="mt-3 flex items-center gap-2 text-sm font-medium text-emerald-700">
           <CheckCircle2 size={15} />
-          {done === "won"
-            ? "Đã chốt đơn — doanh thu được ghi nhận vào Dashboard."
-            : "Đã lưu vào mục Chờ xử lý. Vào trang Đơn hàng để chốt khi khách đồng ý."}
+          {editingId
+            ? (done === "won" ? "Đã cập nhật & chốt đơn." : "Đã cập nhật đơn (chờ xử lý). Mở trang Đơn hàng để xem.")
+            : (done === "won"
+              ? "Đã chốt đơn — doanh thu được ghi nhận vào Dashboard."
+              : "Đã lưu vào mục Chờ xử lý. Vào trang Đơn hàng để chốt khi khách đồng ý.")}
         </div>
       )}
     </div>
@@ -1430,6 +1441,34 @@ export default function App() {
   // Danh sách nhân viên — lưu trong storage, sửa được từ giao diện (không cần đụng code)
   const [nhanVienList, setNhanVienList] = useState(NHAN_VIEN);
   const [newNV, setNewNV] = useState("");
+  const [editingOrderId, setEditingOrderId] = useState(null);
+
+  // Mở lại 1 báo giá (đơn) từ trang Đơn hàng để xem/sửa
+  useEffect(() => {
+    const loadQuote = () => {
+      const req = takePendingQuote();
+      if (!req || !req.order) return;
+      const o = req.order;
+      setCustomer({ name: o.customer || "", project: o.project || "" });
+      if (o.quoter) setQuoter(o.quoter);
+      // Ưu tiên ảnh chụp báo giá gốc; nếu đơn cũ chưa có -> tái tạo từ dòng đơn giản
+      const raw = (o.quote && Array.isArray(o.quote.items) && o.quote.items.length)
+        ? o.quote.items
+        : (o.items || []).map((it) => ({
+            id: uid(), name: it.name || "", loai: it.loai || "", src: "", day: "", dvt: "",
+            rong: "", dai: "", soMet: "", kgM: "", kgCayManual: "", qty: num(it.qty),
+            donGia: 0, note: "", dtManual: "", klManual: it.kl || "", ttManual: it.tien || "",
+          }));
+      setItems(raw);
+      if (o.quote && o.quote.place) setPlace(o.quote.place);
+      if (o.quote && o.quote.terms) setTerms(o.quote.terms);
+      setEditingOrderId(o.id);
+      setScreen("quote"); // màn hình có bảng mặt hàng sửa được + nút cập nhật đơn
+      if (req.preview) setShowPreview(true);
+    };
+    loadQuote(); // nếu yêu cầu đã đặt trước khi Module 1 mount
+    return onOpenQuote(loadQuote);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -2234,7 +2273,7 @@ bar.innerHTML='\u2713 Đã tải file PDF về máy (kiểm tra thư mục Tải
                 <div className="text-xs text-gray-400 mt-1">Đã gồm VAT trong đơn giá</div>
               </div>
             </div>
-            <ChotDonPanel customer={customer} quoter={quoter} items={items} totalKL={totalKL} totalTien={totalTien} />
+            <ChotDonPanel customer={customer} quoter={quoter} items={items} totalKL={totalKL} totalTien={totalTien} place={place} terms={terms} editingId={editingOrderId} onSaved={() => {}} />
             <p className="text-xs text-gray-400 mt-3"><b>Mọi ô đều sửa được.</b> Với thép nhấn Z/L/U: ô <b>Rộng</b> = tổng chiều rộng các cạnh (mm). Ví dụ: L100x50x3 → Rộng=150.  Số mờ = app tự tính (gõ đè được, xoá thì về tự tính). <b>Loại hàng</b> được nhận tự động từ tên mặt hàng (hiển thị màu xanh). <b>kg/m</b> tra bảng barem thống nhất (POSCO + AKS/DVS). Bấm <b>Barem</b> để thêm nhanh thép hình.</p>
           </div>
         )}
