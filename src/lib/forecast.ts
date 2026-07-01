@@ -186,6 +186,33 @@ export interface ForecastSeries {
   model: ModelId;
 }
 
+// Độ chính xác ước tính của TẤT CẢ mô hình cho 1 nhóm (để so sánh & đề xuất)
+export function categoryAccuracies(
+  orders: Order[],
+  category: string,
+  opts: { marketPctAnnual?: number; weeksBack?: number; now?: Date } = {},
+): Record<ModelId, number | null> {
+  const { marketPctAnnual = 0, weeksBack = 12, now = new Date() } = opts;
+  const ys = weeklyConsumption(orders, category, weeksBack, now).map((p) => p.kg);
+  const res = {} as Record<ModelId, number | null>;
+  for (const m of MODELS) {
+    const wk = m.id === "market" ? marketPctAnnual / 100 / 52 : 0;
+    res[m.id] = backtestAccuracy(ys, m.id, wk);
+  }
+  return res;
+}
+
+// Mô hình có độ chính xác cao nhất
+export function bestModel(acc: Record<ModelId, number | null>): ModelId | null {
+  let best: ModelId | null = null;
+  let bestVal = -1;
+  (Object.keys(acc) as ModelId[]).forEach((k) => {
+    const v = acc[k];
+    if (v != null && v > bestVal) { bestVal = v; best = k; }
+  });
+  return best;
+}
+
 export interface ForecastOpts {
   model?: ModelId;
   horizon?: number;

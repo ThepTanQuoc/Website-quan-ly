@@ -14,6 +14,7 @@ import { useInventory, type InvItem } from "../lib/inventory";
 import { useOrders, computeStats, periodRange, PERIOD_CURRENT, type Period } from "../lib/salesStore";
 import {
   forecastCategory, depletionByCategory, buildCategoryDetail, STOCK_STATUS_META, MODELS,
+  categoryAccuracies, bestModel,
   type DepletionRow, type CategoryDetail, type ModelId,
 } from "../lib/forecast";
 import { getMarketSignal, marketPctFor, fetchMarketSignal, type MarketSignal } from "../lib/market";
@@ -70,6 +71,12 @@ export default function InventoryDashboard() {
     () => (detailCat ? buildCategoryDetail(orders, items, detailCat, 4, { model, marketPctAnnual: marketPct(detailCat) }) : null),
     [orders, items, detailCat, model, market],
   );
+  // Độ chính xác của tất cả mô hình cho nhóm đang xem (để so sánh + đề xuất)
+  const accById = useMemo(
+    () => (fcCategory ? categoryAccuracies(orders, fcCategory, { marketPctAnnual: marketPctFor(market, fcCategory) }) : ({} as Record<ModelId, number | null>)),
+    [orders, fcCategory, market],
+  );
+  const recommended = bestModel(accById);
 
   const updateMarket = () => {
     setMktLoading(true);
@@ -216,27 +223,60 @@ export default function InventoryDashboard() {
             </select>
           }
         >
-          {/* Chọn mô hình + độ chính xác */}
-          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-2.5">
-            <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-500"><BrainCircuit size={14} className="text-cyan-600" /> Mô hình:</span>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value as ModelId)}
-              className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-navy focus:border-cyan-400 focus:outline-none"
-            >
-              {MODELS.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-            {forecast && (
-              <Pill color={forecast.accuracy == null ? "slate" : forecast.accuracy >= 75 ? "green" : forecast.accuracy >= 55 ? "amber" : "red"}>
-                <Gauge size={12} /> Độ chính xác {forecast.accuracy == null ? "—" : "~" + forecast.accuracy + "%"}
-              </Pill>
-            )}
-            {model === "market" && (
-              <button onClick={() => setShowMkt((v) => !v)} className="inline-flex items-center gap-1 rounded-lg bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-200">
-                <Globe size={12} /> Thị trường thép VN ({market.asOf}){market.live ? " · realtime" : ""}
-              </button>
-            )}
-            <span className="w-full text-[11px] text-slate-400">{MODELS.find((m) => m.id === model)?.desc}</span>
+          {/* Chọn mô hình + độ chính xác từng mô hình */}
+          <div className="mb-3 rounded-xl bg-slate-50 p-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-500"><BrainCircuit size={14} className="text-cyan-600" /> Mô hình:</span>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value as ModelId)}
+                className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-navy focus:border-cyan-400 focus:outline-none"
+              >
+                {MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}{accById[m.id] != null ? ` — ~${accById[m.id]}%` : ""}{m.id === recommended ? " ⭐" : ""}
+                  </option>
+                ))}
+              </select>
+              {forecast && (
+                <Pill color={forecast.accuracy == null ? "slate" : forecast.accuracy >= 70 ? "green" : forecast.accuracy >= 50 ? "amber" : "red"}>
+                  <Gauge size={12} /> Độ chính xác {forecast.accuracy == null ? "—" : "~" + forecast.accuracy + "%"}
+                </Pill>
+              )}
+              {recommended && recommended !== model && (
+                <button onClick={() => setModel(recommended)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">
+                  ⭐ Dùng mô hình chính xác nhất ({MODELS.find((m) => m.id === recommended)?.name} ~{accById[recommended]}%)
+                </button>
+              )}
+              {model === "market" && (
+                <button onClick={() => setShowMkt((v) => !v)} className="inline-flex items-center gap-1 rounded-lg bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-200">
+                  <Globe size={12} /> Thị trường thép VN ({market.asOf}){market.live ? " · realtime" : ""}
+                </button>
+              )}
+            </div>
+            {/* So sánh độ chính xác các mô hình */}
+            <div className="mt-2.5 space-y-1">
+              {MODELS.map((m) => {
+                const a = accById[m.id];
+                const isBest = m.id === recommended;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setModel(m.id)}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors ${m.id === model ? "bg-white ring-1 ring-cyan-300" : "hover:bg-white/70"}`}
+                  >
+                    <span className={`w-40 shrink-0 truncate text-[11px] font-semibold ${m.id === model ? "text-navy" : "text-slate-500"}`}>
+                      {m.name}{isBest ? " ⭐" : ""}
+                    </span>
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-200">
+                      <span className="block h-full rounded-full" style={{ width: `${a ?? 0}%`, background: a == null ? "#cbd5e1" : a >= 70 ? "#10b981" : a >= 50 ? "#f59e0b" : "#ef4444" }} />
+                    </span>
+                    <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-600">{a == null ? "—" : "~" + a + "%"}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-400">{MODELS.find((m) => m.id === model)?.desc} · Độ chính xác ước tính bằng kiểm định ngược (backtest) trên lịch sử bán thực tế.</p>
           </div>
 
           {model === "market" && showMkt && (
